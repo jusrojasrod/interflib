@@ -1,0 +1,23 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# === Entornos virtuales ===
+.venv/
+venv/
+env/
+
+# === Herramientas / cachés ===
+.pytest_cache/
+.ipynb_checkpoints/
+
+# === Artefactos de depuración (salidas sueltas de __main__) ===
+/fit.png
+
+# === Sistema ===
+.DS_Store
+Thumbs.db
+desktop.ini
