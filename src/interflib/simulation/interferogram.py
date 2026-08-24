@@ -46,14 +46,32 @@ from scipy.ndimage import gaussian_filter
 
 @dataclass
 class SceneGeometry:
-    """Field of view and gauge-block footprint, in millimetres unless noted."""
+    """Field of view and gauge-block footprint, in millimetres unless noted.
 
-    resolution: int = 512               # square image side, pixels
-    fov_mm: float = 25.0                # field of view across the frame, mm
+    ``resolution`` is either an ``int`` (square, ``n x n``) or a ``(height_px, width_px)``
+    tuple for a non-square sensor. ``fov_mm`` is the field of view across the **width**; the
+    height field of view follows from the pixel aspect ratio, so pixels stay square.
+    """
+
+    resolution: "int | tuple[int, int]" = 512  # square side, or (height_px, width_px)
+    fov_mm: float = 25.0                # field of view across the width, mm
     block_width_mm: float = 9.0        # block footprint along x (ISO 3650 face ~9 mm)
     block_height_mm: float = 35.0      # block footprint along y (~35 mm)
     block_center_mm: tuple = (0.0, 0.0)  # (x, y) offset of the block from the frame centre
     block_rotation_deg: float = 0.0    # in-plane rotation of the block footprint
+
+    @classmethod
+    def cs505mu(cls, *, fov_mm: float = 25.0, scale: float = 1.0,
+                **block) -> "SceneGeometry":
+        """Full-frame CS505MU geometry (2448 x 2048), optionally downscaled by ``scale``.
+
+        The sensor is 2448 (W) x 2048 (H); ``scale`` < 1 keeps that aspect ratio with fewer
+        pixels for lighter simulations. ``fov_mm`` and any ``block_*`` keyword pass straight
+        through. The object-plane pixel pitch follows from ``fov_mm`` and the width (i.e.
+        from the imaging magnification), not from the 3.45 um sensor pitch directly.
+        """
+        return cls(resolution=(round(2048 * scale), round(2448 * scale)),
+                   fov_mm=fov_mm, **block)
 
 
 @dataclass
@@ -138,17 +156,44 @@ def fringe_fraction_of_length(central_length_nm: float, wavelength_nm: float) ->
     return float((2.0 * central_length_nm / wavelength_nm) % 1.0)
 
 
-def _normalized_grid(resolution: int):
-    """Return ``X, Y`` meshgrids normalised to ``[-1, 1]`` (X across columns)."""
-    axis = np.linspace(-1.0, 1.0, resolution)
-    return np.meshgrid(axis, axis)
+def _pixel_dims(geometry: SceneGeometry):
+    """Return ``(height_px, width_px)`` from ``geometry.resolution`` (int means square)."""
+    r = geometry.resolution
+    if isinstance(r, (tuple, list)):
+        return int(r[0]), int(r[1])
+    return int(r), int(r)
 
 
-def _block_mask(geom: SceneGeometry, X, Y):
+def _coordinate_grids(geometry: SceneGeometry):
+    """Return ``(Xn, Yn, Xr, Yr)`` coordinate meshgrids of shape ``(height, width)``.
+
+    ``Xn, Yn`` are normalised to each axis half-extent (``[-1, 1]`` across columns and rows).
+    They drive the *per-axis* quantities: the tilt fringe count and the block mask.
+
+    ``Xr, Yr`` are *isotropic*: they share one physical scale so that circular features
+    (beam, vignetting, wavefront aberration, flatness) stay circular on a non-square frame.
+    ``Yr = Yn * (height - 1) / (width - 1)``, which makes the pixel pitch identical on both
+    axes (square pixels); for a square frame ``Xr, Yr == Xn, Yn``.
+    """
+    height, width = _pixel_dims(geometry)
+    xn = np.linspace(-1.0, 1.0, width)
+    yn = np.linspace(-1.0, 1.0, height)
+    Xn, Yn = np.meshgrid(xn, yn)
+    return Xn, Yn, Xn, Yn * _pixel_aspect(height, width)
+
+
+def _pixel_aspect(height: int, width: int) -> float:
+    """Height/width aspect that keeps pixels square under the ``[-1, 1]`` endpoint grid."""
+    return (height - 1) / (width - 1) if width > 1 else 1.0
+
+
+def _block_mask(geom: SceneGeometry, Xn, Yn):
     """Boolean mask of the (optionally rotated, off-centre) rectangular block face."""
-    half = geom.fov_mm / 2.0
-    x_mm = X * half - geom.block_center_mm[0]
-    y_mm = Y * half - geom.block_center_mm[1]
+    height, width = _pixel_dims(geom)
+    half_x = geom.fov_mm / 2.0
+    half_y = geom.fov_mm * _pixel_aspect(height, width) / 2.0
+    x_mm = Xn * half_x - geom.block_center_mm[0]
+    y_mm = Yn * half_y - geom.block_center_mm[1]
 
     theta = np.deg2rad(geom.block_rotation_deg)
     cos_t, sin_t = np.cos(theta), np.sin(theta)
@@ -278,23 +323,25 @@ def synthesize_interferogram(
     sensor = sensor or SensorModel()
     rng = np.random.default_rng(seed)
 
-    X, Y = _normalized_grid(geometry.resolution)
-    mask = _block_mask(geometry, X, Y)
+    # Per-axis grids (Xn, Yn) drive the tilt and the mask; isotropic grids (Xr, Yr) drive
+    # the radial terms so circular features stay circular on a non-square frame.
+    Xn, Yn, Xr, Yr = _coordinate_grids(geometry)
+    mask = _block_mask(geometry, Xn, Yn)
 
     # --- Layer 1: optical phase --------------------------------------------------------
     lam = phase.wavelength_nm
 
-    height_nm = _tilt_height_nm(X, Y, phase.fringes_x, phase.fringes_y, lam)
-    height_nm = height_nm + _low_order_flatness_nm(X, Y, phase.platen_flatness_pv_nm)
+    height_nm = _tilt_height_nm(Xn, Yn, phase.fringes_x, phase.fringes_y, lam)
+    height_nm = height_nm + _low_order_flatness_nm(Xr, Yr, phase.platen_flatness_pv_nm)
 
     block_extra_nm = (
-        _tilt_height_nm(X, Y, phase.block_tilt_mismatch_x,
+        _tilt_height_nm(Xn, Yn, phase.block_tilt_mismatch_x,
                         phase.block_tilt_mismatch_y, lam)
-        + _low_order_flatness_nm(X, Y, phase.block_flatness_pv_nm)
+        + _low_order_flatness_nm(Xr, Yr, phase.block_flatness_pv_nm)
     )
     height_nm = np.where(mask, height_nm + block_extra_nm, height_nm)
 
-    opd_nm = 2.0 * height_nm + _aberration_opd_nm(X, Y, phase)
+    opd_nm = 2.0 * height_nm + _aberration_opd_nm(Xr, Yr, phase)
 
     fraction_truth = fringe_fraction_of_length(phase.central_length_nm, lam)
     step_nm = fraction_truth * lam + phase.phase_change_diff_rad * lam / (2.0 * np.pi)
@@ -303,8 +350,8 @@ def synthesize_interferogram(
     phi = (2.0 * np.pi / lam) * opd_nm + phase.phase_shift_rad
 
     # --- Layer 2: image formation ------------------------------------------------------
-    i0 = _illumination(X, Y, illumination)
-    vis = _visibility(X, Y, illumination)
+    i0 = _illumination(Xr, Yr, illumination)
+    vis = _visibility(Xr, Yr, illumination)
     irradiance = i0 * (1.0 + vis * np.cos(phi))
     if illumination.psf_sigma_px > 0.0:
         irradiance = gaussian_filter(irradiance, illumination.psf_sigma_px)

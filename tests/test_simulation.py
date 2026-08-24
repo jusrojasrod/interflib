@@ -115,6 +115,38 @@ def test_cs505mu_preset_matches_datasheet():
     assert result.image.max() <= 4095  # 12-bit full scale
 
 
+def test_nonsquare_resolution_gives_matching_image_shape():
+    result = synthesize_interferogram(
+        geometry=SceneGeometry(resolution=(400, 600)), seed=0)
+    assert result.image.shape == (400, 600)          # (height, width)
+    assert result.opd_nm.shape == (400, 600)
+    assert result.block_mask.shape == (400, 600)
+
+
+def test_square_int_resolution_is_still_supported():
+    result = synthesize_interferogram(geometry=SceneGeometry(resolution=256), seed=0)
+    assert result.image.shape == (256, 256)
+
+
+def test_cs505mu_geometry_carries_the_sensor_aspect():
+    geom = SceneGeometry.cs505mu(scale=0.25)
+    assert geom.resolution == (512, 612)             # round(2048*0.25), round(2448*0.25)
+    result = synthesize_interferogram(geometry=geom, seed=0)
+    assert result.image.shape == (512, 612)
+
+
+def test_illumination_is_physically_isotropic_on_a_nonsquare_frame():
+    """Square pixels: equal pixel offsets are equal physical distances, so a circular
+    beam gives equal I0 along rows and columns."""
+    from interflib.simulation.interferogram import _coordinate_grids, _illumination
+
+    geom = SceneGeometry(resolution=(301, 501))       # odd dims -> exact centre pixel
+    _, _, xr, yr = _coordinate_grids(geom)
+    i0 = _illumination(xr, yr, Illumination(vignette=0.3, beam_waist_frac=0.9))
+    cy, cx, k = 150, 250, 100
+    assert i0[cy, cx + k] == pytest.approx(i0[cy + k, cx], rel=1e-9)
+
+
 def test_block_mask_marks_a_plausible_area():
     result = synthesize_interferogram(
         geometry=SceneGeometry(fov_mm=25.0, block_width_mm=9.0, block_height_mm=35.0),
