@@ -135,11 +135,11 @@ class FringeFractionMeasurement:
         self.fit(pixels_between_fringes, max_iterations)
         self.calculate_fraction()
         return FringeFractionResult(
-            fringe_fraction=self.fringe_fraction,
-            platen_phase=self.platen_phase,
-            block_phase=self.block_phase,
-            platen_quality=self.platen_quality,
-            block_quality=self.block_quality,
+            fringe_fraction=self.fringe_fraction, # type: ignore
+            platen_phase=self.platen_phase, # type: ignore
+            block_phase=self.block_phase,   # type: ignore
+            platen_quality=self.platen_quality, # type: ignore
+            block_quality=self.block_quality,   # type: ignore
         )
 
     def plot(self, ax=None):

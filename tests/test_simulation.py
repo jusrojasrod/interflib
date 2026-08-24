@@ -102,6 +102,19 @@ def test_bit_depth_sets_the_full_scale():
     assert result.image.max() <= 4095
 
 
+def test_cs505mu_preset_matches_datasheet():
+    """The CS505MU preset carries the datasheet noise values (Thorlabs ITN002518-D02)."""
+    cam = SensorModel.cs505mu()
+    assert cam.bit_depth == 12
+    assert cam.full_well_e == 10000.0
+    assert cam.read_noise_e == 2.5
+    assert cam.shot_noise is True
+
+    result = synthesize_interferogram(sensor=cam, seed=0)
+    assert result.image.dtype == np.uint16
+    assert result.image.max() <= 4095  # 12-bit full scale
+
+
 def test_block_mask_marks_a_plausible_area():
     result = synthesize_interferogram(
         geometry=SceneGeometry(fov_mm=25.0, block_width_mm=9.0, block_height_mm=35.0),

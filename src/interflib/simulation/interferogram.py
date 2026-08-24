@@ -101,6 +101,23 @@ class SensorModel:
     dust_specks: int = 0             # number of dark circular occlusions
     dust_radius_px: float = 6.0
 
+    @classmethod
+    def cs505mu(cls) -> "SensorModel":
+        """Preset for the Thorlabs Kiralux CS505MU acquisition camera.
+
+        Values from the datasheet (Thorlabs ITN002518-D02, ch. 11, CS505MU/MU1
+        specifications): 12-bit ADC, full well >= 10000 e-, read noise < 2.5 e- RMS
+        (dynamic range up to 71 dB), global shutter. See
+        ``wiki/instrumentos/interferometro-inm.md``.
+
+        Only the noise chain is set here. The sensor geometry (3.45 um pixels,
+        2448 x 2048) and the quantum efficiency (72 % peak, 525-580 nm) are not part
+        of the noise model: geometry belongs to ``SceneGeometry`` and QE would only
+        matter for an absolute photon budget, not the relative fringe contrast.
+        """
+        return cls(bit_depth=12, full_well_e=10000.0, read_noise_e=2.5,
+                   shot_noise=True, saturate=True)
+
 
 @dataclass
 class SyntheticInterferogram:
