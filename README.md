@@ -21,7 +21,7 @@ interflib/
 │   └── uncertainty/      GUM propagation, Monte Carlo, budget
 ├── tests/                test code only (synthetic signals generated in-test)
 ├── notebooks/            exploration
-├── tools/                library tools (build_budget, select_roi, ...)
+├── tools/                library tools (select_roi, calibration runner, ...)
 └── simulations/          synthetic interferogram generator and outputs
 ```
 
