@@ -47,7 +47,7 @@ class EdlenRefractiveIndex:
         """
         if relative_humidity is None and dew_point is None and frost_point is None:
             raise ValueError(
-                "Incomplete environment state: You must provide either 'relative_humidity', "
+                "Incomplete environment state: provide exactly one of 'relative_humidity', "
                 "'dew_point', or 'frost_point'."
             )
         if not (-40.0 <= temperature <= 100.0): raise EdlenInputBoundsError(f"Temperature {temperature} °C is out of bounds. Must be between -40 °C and 100 °C.")
