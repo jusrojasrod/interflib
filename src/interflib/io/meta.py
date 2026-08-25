@@ -1,7 +1,5 @@
 """Validation of the ``.meta.yaml`` sidecar required by the data contract.
 
-Wiki: data/CONTRATO.md
-
 Every file in ``data/raw/`` must be named ``AAAAMMDD_LN_instrument_serie-NNN.ext``
 and be accompanied by a sidecar of the same stem with the ``.meta.yaml`` extension,
 carrying at minimum: ``fecha``, ``linea``, ``operador``, ``instrumento``,

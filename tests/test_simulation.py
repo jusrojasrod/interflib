@@ -1,6 +1,4 @@
 """Tests for the layered Twyman-Green interferogram synthesizer.
-
-Wiki: wiki/metodos/simulacion-interferograma.md
 """
 import numpy as np
 import pytest

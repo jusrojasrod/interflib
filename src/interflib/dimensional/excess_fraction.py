@@ -1,7 +1,5 @@
 """Absolute length of a gauge block by the excess fraction method (single wavelength).
 
-Wiki: wiki/metodos/exceso-fraccional.md
-
 Given the wavelength in air, the nominal length and the measured fringe fraction, the
 integer fringe order is resolved from the nominal length and the absolute length is
 reduced to the 20 C reference temperature.

@@ -1,7 +1,5 @@
 """L2 - fringe pattern and phase analysis.
 
-Wiki: wiki/lineas/L2-franjas-fase.md
-
 Scope: phase-shifting algorithms, phase unwrapping, Zernike polynomial fitting and
 surface topography.
 

@@ -1,7 +1,5 @@
 """Synthesis of interferograms for testing the analysis pipelines.
 
-Wiki: wiki/metodos/simulacion-interferograma.md
-
 Scope: physically layered generation of Twyman-Green gauge-block interferograms
 (optical phase -> image formation -> sensor), used as ground truth for the L1 excess-
 fraction and L2 fringe-analysis pipelines.

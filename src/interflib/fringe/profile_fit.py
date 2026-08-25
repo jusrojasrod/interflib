@@ -1,7 +1,5 @@
 """Fringe fraction from a Twyman-Green interferogram by sinusoidal profile fitting.
 
-Wiki: wiki/conceptos/analisis-de-franjas.md
-
 Two regions of interest (the reference platen and the gauge block) are averaged into
 1-D intensity profiles, and each is fitted with a sinusoidal interference model. The
 fractional fringe order is the phase difference between the block and the platen,

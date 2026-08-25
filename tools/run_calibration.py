@@ -1,7 +1,5 @@
 """End-to-end calibration runner for simulated Twyman-Green interferograms.
 
-Wiki: wiki/metodos/exceso-fraccional.md
-
 Runs the full pipeline on a simulated interferogram and reports the absolute
 length:  load  ->  fringe fraction (sinusoidal fit)  ->  excess fraction.
 

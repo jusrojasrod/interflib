@@ -1,7 +1,5 @@
 """interflib - analysis library for the INM interferometry project.
 
-Wiki: wiki/index.md
-
 Submodules mirror the project's work lines:
 
 - ``io``            file readers and ``.meta.yaml`` sidecar validation (data contract)
@@ -11,12 +9,11 @@ Submodules mirror the project's work lines:
 - ``vibration``     L3: heterodyne detection, fringe counting, spectral analysis
 - ``uncertainty``   L4: GUM propagation, Monte Carlo, budget generation
 
-The shared figure style is *not* part of the library: it lives under ``code/apoyo/``
-because report figures are not fringe analysis (see
-``wiki/decisiones/ADR-004-arquitectura-interflib.md``).
+The shared figure style is *not* part of the library: it lives outside the package
+because report figures are not fringe analysis.
 
 Being ported from the ``Exccess_fractions`` prototype one method at a time; each module
-carries its own implementation status. See ``wiki/estado.md``.
+carries its own implementation status in its docstring.
 """
 
 __version__ = "0.1.0"

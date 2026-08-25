@@ -1,6 +1,4 @@
 """Refractive index of air and wavelength in air (modified Edlen, Birch & Downs).
-
-Wiki: wiki/conceptos/indice-refraccion-aire.md
 """
 import math
 import warnings

@@ -1,7 +1,5 @@
 """Instrument file readers and data-contract validation.
 
-Wiki: data/CONTRATO.md
-
 Responsibilities
 ----------------
 - Read raw instrument formats into tidy structures.

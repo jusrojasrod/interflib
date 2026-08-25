@@ -3,9 +3,8 @@
 Analysis library for the INM interferometry project: absolute length determination
 of gauge blocks from Twyman-Green interferograms.
 
-This directory is the **library project** (isolated from the report/wiki tooling that
-lives under `code/apoyo/`). It follows a `src` layout: the importable, shippable
-package is `src/interflib/`; everything else here (tests, notebooks, tools,
+This directory is the **library project**. It follows a `src` layout: the importable,
+shippable package is `src/interflib/`; everything else here (tests, notebooks, tools,
 simulations) supports development but does **not** travel in a `pip install`.
 
 ## Layout
@@ -30,7 +29,7 @@ interflib/
 
 Under construction. The package is being ported from the `Exccess_fractions`
 prototype one method at a time; each module documents its own status in its
-docstring. Architecture decision: `wiki/decisiones/ADR-004-arquitectura-interflib.md`.
+docstring.
 
 ## Development
 
@@ -40,6 +39,8 @@ pip install -e ".[dev]"   # editable install with pytest, nbstripout
 pytest                    # runs tests/ (src is on pythonpath via pyproject)
 ```
 
-Conventions (see `CLAUDE.md`): English identifiers; every non-trivial function opens
-its docstring with a `Wiki:` anchor to the page it implements; physical constants live
-in `src/interflib/constants.py`, each with a source citation; no magic numbers.
+Conventions: English identifiers; physical constants live in
+`src/interflib/constants.py`, each citing its source; no magic numbers. Where a step,
+algorithm or value relies on a reference, the docstring cites that source directly
+(paper, standard or datasheet) — this repository is self-contained and does not point
+to any external knowledge base.

@@ -1,6 +1,4 @@
 """Monochromatic (single-wavelength) excess fraction method solver.
-
-Wiki: wiki/metodos/exceso-fraccional.md
 """
 import numpy as np
 

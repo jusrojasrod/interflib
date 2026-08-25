@@ -1,7 +1,5 @@
 """Interferogram image loading.
 
-Wiki: data/CONTRATO.md
-
 Reads a grayscale interferogram from disk in a Unicode-path-safe way (via
 ``cv2.imdecode`` over ``numpy.fromfile``, which tolerates non-ASCII paths that
 ``cv2.imread`` mishandles on Windows).

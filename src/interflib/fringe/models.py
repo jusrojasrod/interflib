@@ -1,6 +1,4 @@
 """Interference model and fit-quality metrics for fringe-profile fitting.
-
-Wiki: wiki/conceptos/analisis-de-franjas.md
 """
 from dataclasses import dataclass
 

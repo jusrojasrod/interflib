@@ -1,7 +1,5 @@
 """Physically layered synthesis of a Twyman-Green gauge-block interferogram.
 
-Wiki: wiki/metodos/simulacion-interferograma.md
-
 The interferogram is built in three separable layers so that each physical effect
 lives in exactly one place:
 
@@ -32,8 +30,7 @@ what a fringe-fraction reader recovers. The recovered ground truth is returned i
 
 The phase-change difference defaults to zero, matching the current excess-fraction
 pipeline (which does not yet apply the correction). Provide a non-zero value to test the
-correction once it is quantified for the INM materials
-(wiki/conceptos/correccion-cambio-fase.md).
+correction once it is quantified for the INM materials.
 
 This module has no I/O side effects: it returns arrays. Saving to disk belongs to a tool
 or notebook, not the library.
@@ -125,8 +122,7 @@ class SensorModel:
 
         Values from the datasheet (Thorlabs ITN002518-D02, ch. 11, CS505MU/MU1
         specifications): 12-bit ADC, full well >= 10000 e-, read noise < 2.5 e- RMS
-        (dynamic range up to 71 dB), global shutter. See
-        ``wiki/instrumentos/interferometro-inm.md``.
+        (dynamic range up to 71 dB), global shutter.
 
         Only the noise chain is set here. The sensor geometry (3.45 um pixels,
         2448 x 2048) and the quantum efficiency (72 % peak, 525-580 nm) are not part
