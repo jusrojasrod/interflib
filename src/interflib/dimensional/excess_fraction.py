@@ -25,7 +25,7 @@ class GaugeBlockLength:
         Parameters
         ----------
         lambda_air : float
-            Wavelength in air, in micrometres (um).
+            Wavelength in air, in nanometres (nm).
         Lp : float
             Nominal length of the block, in millimetres (mm).
         C : float
@@ -35,7 +35,7 @@ class GaugeBlockLength:
         obs_fraction : float
             Measured optical fringe fraction, in [0, 1).
         """
-        self.lambda_air = lambda_air        # um
+        self.lambda_air = lambda_air        # nm
         self.Lp = Lp                        # mm
         self.C = C
         self.t_block = t_block
@@ -57,7 +57,7 @@ class GaugeBlockLength:
         Parameters
         ----------
         lambda_vacuum : float
-            Vacuum wavelength, in micrometres (um).
+            Vacuum wavelength, in nanometres (nm).
         temperature : float
             Air temperature, in degrees Celsius.
         pressure : float
@@ -70,7 +70,7 @@ class GaugeBlockLength:
         env = EdlenRefractiveIndex(temperature=temperature, pressure=pressure,
                                    relative_humidity=relative_humidity,
                                    dew_point=dew_point, frost_point=frost_point)
-        lambda_air = env.wavelength_in_air(lambda_vacuum)  # um
+        lambda_air = env.wavelength_in_air(lambda_vacuum)  # nm
         instance = cls(lambda_air, Lp, C, t_block, obs_fraction)
         # Kept for reporting/traceability of the environmental correction.
         instance.wavelength_vacuum = lambda_vacuum
@@ -79,7 +79,7 @@ class GaugeBlockLength:
 
     def estimate_integer_fringes(self) -> float:
         """Theoretical half-wave count 2 L / lambda_air for the nominal length."""
-        lambda_air_mm = self.lambda_air / 1000.0
+        lambda_air_mm = self.lambda_air / 1e6
         expansion = 1 + self.C * (self.t_block - REFERENCE_TEMPERATURE_C)
         return (2 * self.Lp * expansion) / lambda_air_mm
 
@@ -97,7 +97,7 @@ class GaugeBlockLength:
             order += 1
 
         f_prime = order + self.obs_fraction
-        lambda_air_mm = self.lambda_air / 1000.0
+        lambda_air_mm = self.lambda_air / 1e6
         reduction = 1 + self.C * (REFERENCE_TEMPERATURE_C - self.t_block)
         return (lambda_air_mm / 2.0) * f_prime * reduction
 
@@ -105,11 +105,11 @@ class GaugeBlockLength:
 if __name__ == "__main__":
     # Real-data path: vacuum wavelength + environmental state -> air index.
     block = GaugeBlockLength.from_environment(
-        lambda_vacuum=0.63299139,          # um (iodine-stabilised He-Ne)
+        lambda_vacuum=632.99139,           # nm (iodine-stabilised He-Ne)
         Lp=10.0, C=11.5e-6, t_block=20.0, obs_fraction=0.05,
         temperature=20.0, pressure=101325.0, relative_humidity=50.0,
     )
     print(f"n (air)          : {block.refractive_index:.9f}")
-    print(f"wavelength (air) : {block.lambda_air * 1e3:.6f} nm")
+    print(f"wavelength (air) : {block.lambda_air:.6f} nm")
     print(f"integer order E  : {math.floor(block.estimate_integer_fringes())}")
     print(f"L20              : {block.block_length():.8f} mm")

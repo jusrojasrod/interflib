@@ -115,18 +115,19 @@ class EdlenRefractiveIndex:
         Calculates the refractive index of air for a given wavelength.
 
         Args:
-            wavelength: Wavelength in vacuum in micrometers (um).
+            wavelength: Wavelength in vacuum in nanometers (nm).
 
         Returns:
             The refractive index of air.
         """
-        if not (0.3 <= wavelength <= 1.7): raise EdlenInputBoundsError(f"Wavelength {wavelength} um is out of bounds. Must be between 0.3 and 1.7 um.")
-        if not (0.35 <= wavelength <= 0.65): warnings.warn(f"Wavelength {wavelength} um is outside the strictly conservative Birch and Downs range (0.35 to 0.65 um).", UserWarning)
-        # Aliases 
+        if not (300.0 <= wavelength <= 1700.0): raise EdlenInputBoundsError(f"Wavelength {wavelength} nm is out of bounds. Must be between 300 and 1700 nm.")
+        if not (350.0 <= wavelength <= 650.0): warnings.warn(f"Wavelength {wavelength} nm is outside the strictly conservative Birch and Downs range (350 to 650 nm).", UserWarning)
+        # Aliases
         t = self.temperature
         p = self.pressure
         p_v = self.vapor_pressure
-        s = 1.0 / wavelength**2
+        wavelength_um = wavelength / 1000.0   # the dispersion formula is written in um^-2
+        s = 1.0 / wavelength_um**2
         
         n_s = 1 + 10**(-8) * (self._EDLEN_A + self._EDLEN_B / (130.0 - s) + self._EDLEN_C / (38.9 - s))
         x = (1 + 10**(-8) * (self._EDLEN_E - self._EDLEN_F * t) * p) / (1 + self._EDLEN_G * t)
@@ -139,10 +140,10 @@ class EdlenRefractiveIndex:
         Calculates the wavelength in air.
 
         Args:
-            wavelength: Wavelength in vacuum in micrometers (um).
+            wavelength: Wavelength in vacuum in nanometers (nm).
 
         Returns:
-            The wavelength in air in micrometers (um).
+            The wavelength in air in nanometers (nm).
         """
         n = self.index_refraction(wavelength)
         return wavelength / n

@@ -66,8 +66,8 @@ def run(image_name: str, wavelength_nm: float | None = None,
     true_order = 2 * nominal_mm * 1e6 / wavelength_nm
     expected_fraction = true_order - np.floor(true_order)
 
-    # Simulator uses lambda directly (no air index) -> pass it as lambda_air.
-    gb = GaugeBlockLength(lambda_air=wavelength_nm / 1000.0,
+    # Simulator uses lambda directly (no air index) -> pass it as lambda_air (nm).
+    gb = GaugeBlockLength(lambda_air=wavelength_nm,
                           Lp=nominal_mm, C=STEEL_ALPHA, t_block=20.0,
                           obs_fraction=fraction)
     length_mm = gb.block_length()

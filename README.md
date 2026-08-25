@@ -97,14 +97,15 @@ print(solution.integer_orders)    # resolved integer order per wavelength
 print(solution.margin)            # residual gap to the runner-up; small => ambiguous
 ```
 
-Correct a vacuum wavelength for the refractive index of air (modified Edlén):
+Correct a vacuum wavelength for the refractive index of air (modified Edlén).
+Wavelengths are in nanometres throughout the library.
 
 ```python
 from interflib.dimensional.refraction import EdlenRefractiveIndex
 
 air = EdlenRefractiveIndex(temperature=20.0, pressure=101_325.0, relative_humidity=45.0)
-lambda_air = air.wavelength_in_air(632.9905846)   # HeNe vacuum wavelength (nm)
-n = air.index_refraction(632.9905846)
+n = air.index_refraction(632.9905846)            # HeNe vacuum wavelength (nm) -> ~1.000271
+lambda_air = air.wavelength_in_air(632.9905846)  # wavelength in air (nm)      -> ~632.8188
 ```
 
 Generate a synthetic interferogram with ground truth for testing the analysis:
@@ -123,6 +124,9 @@ truth = result.fraction_truth           # exact fringe fraction that produced it
 ## Conventions
 
 - English identifiers, NumPy-style docstrings.
+- Wavelengths are in nanometres across the public API; lengths are in nanometres in the
+  excess-fraction solvers and in millimetres in `GaugeBlockLength` (each argument states
+  its unit in the docstring).
 - Physical constants live in `src/interflib/constants.py`, each citing its source in a
   comment; no magic numbers in the algorithms.
 - Every implemented method has a test; where an analytic solution exists, the test

@@ -4,13 +4,13 @@ from interflib.dimensional.refraction import EdlenRefractiveIndex, EdlenInputBou
 class TestEdlenCalculator:
     def test_nist_validation_happy_path(self):
         """Validates the refractive index calculation against typical laboratory conditions."""
-        # Standard conditions: 20 °C, 101325 Pa, 50% humidity, 0.633 um wavelength
+        # Standard conditions: 20 °C, 101325 Pa, 50% humidity, 633 nm wavelength
         calc = EdlenRefractiveIndex(
-            temperature=20.0, 
-            pressure=101325.0, 
+            temperature=20.0,
+            pressure=101325.0,
             relative_humidity=50.0
         )
-        wavelength = 0.633  # micrometers
+        wavelength = 633.0  # nanometers
         n_calculated = calc.index_refraction(wavelength)
         expected_n =  1.00027134
         assert n_calculated == pytest.approx(expected_n, rel=1e-7)
@@ -24,7 +24,7 @@ class TestEdlenCalculator:
             pressure=101325.0, 
             dew_point=9.2
         )
-        n = calc.index_refraction(0.6328)
+        n = calc.index_refraction(632.8)
         assert n > 1.0
     
     def test_fail_fast_incomplete_state(self):
@@ -45,7 +45,7 @@ class TestEdlenCalculator:
         # Longitud de onda negativa o fuera de rango
         calc = EdlenRefractiveIndex(temperature=20.0, pressure=101325.0, relative_humidity=50.0)
         with pytest.raises(EdlenInputBoundsError, match="Wavelength"):
-            calc.index_refraction(0.1) # 0.1 um es menor que el límite de 0.3 um
+            calc.index_refraction(100.0) # 100 nm es menor que el límite de 300 nm
 
         # Punto de rocío mayor a temperatura ambiente
         with pytest.raises(ValueError, match="Dew point cannot be higher"):
@@ -65,7 +65,7 @@ class TestEdlenCalculator:
 
     def test_wavelength_in_air(self):
         """Checks the conversion from vacuum wavelength to air wavelength."""
-        vacuum_lambda = 0.632991
+        vacuum_lambda = 632.991
         calc = EdlenRefractiveIndex(temperature=20.0, pressure=101325.0, relative_humidity=50.0)
         air_lambda = calc.wavelength_in_air(vacuum_lambda)
         
