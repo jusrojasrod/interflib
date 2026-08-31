@@ -10,6 +10,9 @@ Modules:
 - ``multiwavelength``  classical multi-wavelength method of exact fractions
                        (MultiwavelengthEFSolver); resolves the integer order from two or
                        more wavelengths, the standard Michelson-Benoit / Decker approach
+- ``coincidence``      the same method by brute-force comb coincidence (CoincidenceEFSolver,
+                       Doiron & Beers / Tilford); symmetric and ambiguity-explicit, an
+                       independent cross-check of ``multiwavelength``
 - ``excess_fraction``  single-wavelength excess fraction (GaugeBlockLength); the air
                        index is delegated to ``refraction`` via ``from_environment``
 - ``mefm``             monochromatic excess fraction solver: the single-wavelength
