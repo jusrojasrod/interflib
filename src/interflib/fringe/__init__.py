@@ -11,8 +11,9 @@ Present:
 - ``phase_shifting`` phase stepping (PSI): wrapped-phase recovery from an N-frame stack
                      (general least-squares plus 3/4-step and Schwider-Hariharan
                      estimators), and the block-vs-platen fringe fraction from a phase map
+- ``unwrap``         2-D phase unwrapping: Itoh baseline, quality-guided flood fill and
+                     the Goldstein branch-cut method (residue detection + branch cuts)
 
 Pending: the Fourier (single-shot spatial-carrier) back-end for the same fringe-to-phase
-stage; the unwrapping algorithm is a design decision to be recorded as an ADR before it is
-written.
+stage.
 """
