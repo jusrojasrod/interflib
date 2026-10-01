@@ -123,7 +123,6 @@ truth = result.fraction_truth           # exact fringe fraction that produced it
 
 ## Conventions
 
-- English identifiers, NumPy-style docstrings.
 - Wavelengths are in nanometres across the public API; lengths are in nanometres in the
   excess-fraction solvers and in millimetres in `GaugeBlockLength` (each argument states
   its unit in the docstring).
