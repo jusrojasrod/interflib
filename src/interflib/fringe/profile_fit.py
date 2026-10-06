@@ -64,12 +64,24 @@ class FringeFractionMeasurement:
         return self.platen_profile, self.block_profile, self.pixel_indices
 
     @staticmethod
-    def _initial_parameter_guess(profile, pixels_between_fringes: float = 175.0):
-        guess_amplitude = (np.max(profile) - np.min(profile)) / 2
-        guess_offset = np.mean(profile)
-        guess_frequency = 2 * np.pi / pixels_between_fringes
-        guess_phase = 0.0
-        return [guess_amplitude, guess_frequency, guess_phase, guess_offset]
+    def _initial_parameter_guess(profile, x, frequency: float):
+        """Seed ``(A, w, phi, C)`` for the non-linear fit at a given frequency.
+
+        At a fixed frequency the model ``A*sin(w*x + phi) + C`` is linear in
+        ``A*cos(phi)``, ``A*sin(phi)`` and ``C``, so a linear least-squares solve gives
+        the amplitude, phase and offset that best match the profile at that frequency
+        (the classical three-parameter, known-frequency sine fit of IEEE Std 1057).
+
+        A fixed phase seed is not enough: when the seed frequency is slightly off (the
+        block is seeded at the platen frequency, and a wedge between block and platen
+        makes their periods differ) and the true phase lies about a quarter period from
+        the seed, the optimiser can trade phase for frequency and converge to a
+        spurious sinusoid. Seeding the phase from the data avoids that start.
+        """
+        x = np.asarray(x, dtype=float)
+        design = np.column_stack([np.sin(frequency * x), np.cos(frequency * x), np.ones_like(x)])
+        (a, b, c), *_ = np.linalg.lstsq(design, np.asarray(profile, dtype=float), rcond=None)
+        return [float(np.hypot(a, b)), float(frequency), float(np.arctan2(b, a)), float(c)]
 
     @staticmethod
     def _canonicalize_amplitude(params: np.ndarray) -> np.ndarray:
@@ -87,14 +99,18 @@ class FringeFractionMeasurement:
         return np.array([A, w, phi, C])
 
     def fit(self, pixels_between_fringes: float = 175.0, max_iterations: int = 5000):
-        """Fit both profiles (sharing the fringe frequency) and store the fit quality.
+        """Fit both profiles and store the fit quality.
+
+        The block fit is seeded at the platen's fitted frequency but its frequency stays
+        free, so a period difference between block and platen (a wedge) is preserved.
 
         Returns ``self`` so calls can be chained.
         """
         if self.platen_profile is None:
             self.get_fringe_profiles()
 
-        p0_platen = self._initial_parameter_guess(self.platen_profile, pixels_between_fringes)
+        p0_platen = self._initial_parameter_guess(self.platen_profile, self.pixel_indices,
+                                                  2 * np.pi / pixels_between_fringes)
         self.platen_params, cov_platen = curve_fit(
             interference_model, self.pixel_indices, self.platen_profile,
             p0=p0_platen, maxfev=max_iterations,
@@ -103,10 +119,9 @@ class FringeFractionMeasurement:
         self.platen_quality = fit_quality(self.pixel_indices, self.platen_profile,
                                           self.platen_params, cov_platen)
 
-        # Fit the block sharing the platen's fringe frequency.
+        # Seed the block at the platen's fitted frequency (the block frequency stays free).
         _, frequency, _, _ = self.platen_params
-        p0_block = self._initial_parameter_guess(self.block_profile, pixels_between_fringes)
-        p0_block[1] = frequency
+        p0_block = self._initial_parameter_guess(self.block_profile, self.pixel_indices, frequency)
         self.block_params, cov_block = curve_fit(
             interference_model, self.pixel_indices, self.block_profile,
             p0=p0_block, maxfev=max_iterations,
