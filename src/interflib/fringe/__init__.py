@@ -13,6 +13,11 @@ Present:
                      estimators), and the block-vs-platen fringe fraction from a phase map
 - ``unwrap``         2-D phase unwrapping: Itoh baseline, quality-guided flood fill and
                      the Goldstein branch-cut method (residue detection + branch cuts)
+- ``edge_comparison`` single-shot fringe fraction with block and platen phases compared
+                     at the edge column (column-resolved phase extrapolated to the edge),
+                     which cancels any phase term common to both surfaces
+- ``wedge``          block-platen wedge along x and y from the same comparison, in
+                     fringes/px and, given the pixel scale, in microradians
 
 Pending: the Fourier (single-shot spatial-carrier) back-end for the same fringe-to-phase
 stage.
