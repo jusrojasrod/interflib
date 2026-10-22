@@ -21,4 +21,7 @@ Present:
 - ``fourier``        single-shot Fourier (spatial-carrier) demodulation, along each column
                      or in two dimensions over a region on one surface (synchronous
                      detection), and the edge-column fringe fraction from either
+- ``diagnostics``    inspection tools on top of ``fourier``: whole-field overview maps, the
+                     block edge from the modulation dip, and the sensitivity of the
+                     fraction to the filter width
 """

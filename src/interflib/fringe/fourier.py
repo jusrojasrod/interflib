@@ -502,6 +502,34 @@ def demodulate_2d(img, rows, cols, carrier=None, bandwidth=0.5, taper=0.0, min_c
                     analytic=analytic)
 
 
+def modulation_mask(modulation, min_fraction=0.3, reference=None):
+    """Pixels whose fringe modulation reaches a fraction of a reference level.
+
+    The modulation ``b`` (the envelope of the demodulated fringes) is low where there are
+    no fringes to speak of: outside the illuminated field, beyond the far end of the
+    platen strip, on the dark line of the block edge, under dust. Thresholding it gives a
+    validity mask (the pupil) without looking at the raw intensity, which a bright but
+    fringe-free area would pass.
+
+    Parameters
+    ----------
+    modulation : array_like
+        Modulation map, for instance ``PhaseMap.modulation``.
+    min_fraction : float
+        Threshold as a fraction of ``reference``.
+    reference : float, optional
+        Reference modulation; the median of the finite values if omitted.
+
+    Returns
+    -------
+    numpy.ndarray of bool
+    """
+    modulation = np.asarray(modulation, dtype=float)
+    ref = np.nanmedian(modulation) if reference is None else float(reference)
+    with np.errstate(invalid="ignore"):
+        return np.isfinite(modulation) & (modulation >= min_fraction * ref)
+
+
 def unwrap_phase_map(phase_map: PhaseMap, method="quality", mask=None, min_modulation=None) -> UnwrappedMap:
     """Continuous phase of a region: unwrap its carrier-free phase in two dimensions.
 
@@ -541,7 +569,7 @@ def unwrap_phase_map(phase_map: PhaseMap, method="quality", mask=None, min_modul
     if valid.shape != shape:
         raise ValueError("mask shape %s does not match the region %s" % (valid.shape, shape))
     if min_modulation is not None:
-        valid = valid & (phase_map.modulation >= min_modulation * np.nanmedian(phase_map.modulation))
+        valid = valid & modulation_mask(phase_map.modulation, min_modulation)
     valid = valid & np.isfinite(phase_map.object_phase)
     wrapped = np.angle(np.exp(1j * phase_map.object_phase))
     if method == "quality":
