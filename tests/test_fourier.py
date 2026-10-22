@@ -12,6 +12,7 @@ from interflib.fringe.fourier import (
     fourier_edge_fraction,
     fourier_edge_fraction_2d,
     map_column_phases,
+    unwrap_phase_map,
 )
 
 # --------------------------------------------------------------------------------------
@@ -213,3 +214,78 @@ def test_fourier_edge_fraction_2d_with_noise(seed):
     res = fourier_edge_fraction_2d(_scene(0.42, tilt_deg=1.0, noise=40.0, seed=seed), EDGE_X, ROWS,
                                    EVAL_ROW, fft_rows=FFT_ROWS)
     assert _circular_gap(res.fraction, 0.42) < 3e-3
+
+
+# --------------------------------------------------------------------------------------
+# Carrier-free phase and unwrapping of a two-dimensional map
+# --------------------------------------------------------------------------------------
+def _relief(amplitude, ny=400, nx=300, period=25.0, tilt_deg=3.0, dark_band=False):
+    """One surface with a Gaussian relief of ``amplitude`` fringes on a tilted carrier."""
+    y = np.arange(ny, dtype=float)[:, None]
+    x = np.arange(nx, dtype=float)[None, :]
+    carrier = 2 * np.pi * (np.tan(np.radians(tilt_deg)) * x + y) / period
+    relief = 2 * np.pi * amplitude * np.exp(-(((x - 150) / 150) ** 2 + ((y - 200) / 200) ** 2))
+    phase = carrier + relief + 0.4
+    b = np.full((ny, nx), 800.0)
+    if dark_band:
+        b[:, 200:] = 20.0                      # a 100 px strip with almost no fringes
+    return 1000.0 + b * np.cos(phase), phase, relief
+
+
+def test_object_phase_is_the_phase_without_the_carrier():
+    img, phase, _ = _relief(0.0)
+    m = demodulate_2d(img, (0, 400), (0, 300))
+    g_x, g_y = m.carrier
+    ramp = 2 * np.pi * (g_x * m.x[None, :] + g_y * m.y[:, None])
+    assert np.allclose(np.angle(np.exp(1j * (m.phase - m.object_phase - ramp))), 0.0, atol=1e-9)
+    # a flat, tilted surface has a constant carrier-free phase, up to the small plane left
+    # by the error of the carrier estimate (indistinguishable from a tilt of the surface)
+    inner = (slice(60, -60), slice(40, -40))
+    spread = np.angle(np.exp(1j * (m.object_phase[inner] - m.object_phase[200, 150])))
+    assert np.max(np.abs(spread)) < 5e-4
+
+
+@pytest.mark.parametrize("method", ["quality", "goldstein", "itoh"])
+def test_unwrapped_phase_of_a_flat_surface_is_exact(method):
+    img, phase, _ = _relief(0.0)
+    u = unwrap_phase_map(demodulate_2d(img, (0, 400), (0, 300)), method=method)
+    inner = (slice(60, -60), slice(40, -40))
+    err = (u.phase - phase)[inner]
+    assert np.max(np.abs(err - np.median(err))) < 1e-4
+
+
+@pytest.mark.parametrize("method", ["quality", "goldstein", "itoh"])
+def test_unwrapping_a_curved_surface(method):
+    """1.2 fringes of relief need unwrapping; the result is continuous and keeps the
+    relief, with the edge error of the demodulation (see unwrap_phase_map)."""
+    img, phase, relief = _relief(1.2)
+    m = demodulate_2d(img, (0, 400), (0, 300))
+    u = unwrap_phase_map(m, method=method)
+    inner = (slice(100, -100), slice(80, -80))
+    # continuous: no 2 pi jumps between neighbours, and it rewraps to the demodulated phase
+    assert np.nanmax(np.abs(np.diff(u.object_phase, axis=0))) < np.pi / 2
+    assert np.nanmax(np.abs(np.diff(u.object_phase, axis=1))) < np.pi / 2
+    assert np.allclose(np.angle(np.exp(1j * (u.object_phase - m.object_phase))), 0.0, atol=1e-9)
+    err = (u.phase - phase)[inner]
+    assert np.max(np.abs(err - np.median(err))) < 0.06
+
+
+def test_unwrap_mask_and_modulation_threshold():
+    img, _, _ = _relief(0.0, dark_band=True)
+    m = demodulate_2d(img, (0, 400), (0, 300))
+    u = unwrap_phase_map(m, min_modulation=0.3)
+    # the filter smooths the modulation over some 1 / (bandwidth * |g|) px across the edge
+    # of the dark strip (and across the periodic ends of the region), so only the interiors
+    # are checked
+    assert not u.mask[100:300, 235:275].any() and u.mask[100:300, 40:160].all()
+    assert np.isnan(u.object_phase[100:300, 235:275]).all()
+    mask = np.ones((400, 300), dtype=bool)
+    mask[:, :20] = False
+    u2 = unwrap_phase_map(m, method="goldstein", mask=mask)
+    assert np.isnan(u2.object_phase[:, :20]).all()
+    with pytest.raises(ValueError):
+        unwrap_phase_map(m, method="itoh", mask=mask)
+    with pytest.raises(ValueError):
+        unwrap_phase_map(m, method="lsq")
+    with pytest.raises(ValueError):
+        unwrap_phase_map(m, mask=np.ones((10, 10), dtype=bool))

@@ -23,9 +23,13 @@ A two-dimensional variant, :func:`demodulate_2d`, transforms a whole rectangular
 that lies on one surface (the platen beside the block, or the block face) and filters
 the carrier lobe in two dimensions, by synchronous detection: the region is multiplied by
 ``exp(-i 2 pi (g_x x + g_y y))``, low-pass filtered and shifted back. It limits the
-bandwidth along ``x`` as well as along ``y`` and returns a phase map of the region;
-:func:`fourier_edge_fraction_2d` demodulates a platen region and a block region separately
-and compares them at the edge like the column variant.
+bandwidth along ``x`` as well as along ``y`` and returns a phase map of the region, with
+and without the carrier; :func:`unwrap_phase_map` unwraps the carrier-free phase into a
+continuous map of the surface, the end product of the method in Takeda et al. (1982) and
+in Munoz Maciel et al., "Digital Processing Techniques for Fringe Analysis", in *Optical
+Interferometry*, InTech, 2017, sec. 5, doi:10.5772/66474. :func:`fourier_edge_fraction_2d`
+demodulates a platen region and a block region separately and compares them at the edge
+like the column variant.
 
 The phase is returned in the convention of :mod:`interflib.fringe.edge_comparison`
 (the phase ``phi`` of ``A sin(w y + phi) + C`` with ``w > 0``), so the column phases of
@@ -46,6 +50,7 @@ from .edge_comparison import (
     fraction_at_edge,
     side_band_centres,
 )
+from .unwrap import unwrap_goldstein, unwrap_itoh, unwrap_quality_guided
 
 
 @dataclass
@@ -324,7 +329,12 @@ class PhaseMap:
         Columns and rows of the region.
     phase : numpy.ndarray
         Wrapped phase, rows x columns, radians in ``[0, 2 pi)``, in the sine convention;
-        it includes the carrier ``2 pi (g_x x + g_y y)``.
+        it includes the carrier.
+    object_phase : numpy.ndarray
+        The same phase with the carrier removed, wrapped to ``[0, 2 pi)``: what the
+        surface adds to the tilt of the reference. ``phase = object_phase + 2 pi (g_x (x -
+        x[0]) + g_y (y - y[0]))`` modulo ``2 pi``, with the carrier referred to the first
+        row and column of the region.
     modulation : numpy.ndarray
         Fringe amplitude ``b``, rows x columns.
     background : numpy.ndarray
@@ -339,10 +349,38 @@ class PhaseMap:
     x: np.ndarray
     y: np.ndarray
     phase: np.ndarray
+    object_phase: np.ndarray
     modulation: np.ndarray
     background: np.ndarray
     carrier: tuple
     analytic: np.ndarray
+
+
+@dataclass
+class UnwrappedMap:
+    """Continuous phase of a two-dimensional phase map.
+
+    Attributes
+    ----------
+    x, y : numpy.ndarray
+        Columns and rows of the region.
+    object_phase : numpy.ndarray
+        Unwrapped phase with the carrier removed, radians (``nan`` outside ``mask``). It
+        is defined up to a constant: unwrapping fixes differences, not the absolute value.
+    phase : numpy.ndarray
+        ``object_phase`` plus the carrier ramp, the continuous phase of the fringes.
+    mask : numpy.ndarray
+        Pixels that took part in the unwrapping.
+    method : str
+        Unwrapping method used.
+    """
+
+    x: np.ndarray
+    y: np.ndarray
+    object_phase: np.ndarray
+    phase: np.ndarray
+    mask: np.ndarray
+    method: str
 
 
 def _region(img, rows, cols):
@@ -456,8 +494,72 @@ def demodulate_2d(img, rows, cols, carrier=None, bandwidth=0.5, taper=0.0, min_c
         background = background / window
     # angle(analytic) is the phase of b*cos(.); the sine convention adds pi/2
     phase = (np.angle(analytic) + np.pi / 2) % (2 * np.pi)
-    return PhaseMap(x=np.arange(*cols), y=np.arange(*rows), phase=phase, modulation=2 * np.abs(analytic),
-                    background=background, carrier=(float(g_x), float(g_y)), analytic=analytic)
+    # Before shifting the carrier back, the baseband angle is the phase of the surface alone
+    # (carrier removed, as in Takeda et al. 1982); same sine convention as `phase`.
+    object_phase = (np.angle(baseband) + np.pi / 2) % (2 * np.pi)
+    return PhaseMap(x=np.arange(*cols), y=np.arange(*rows), phase=phase, object_phase=object_phase,
+                    modulation=2 * np.abs(analytic), background=background, carrier=(float(g_x), float(g_y)),
+                    analytic=analytic)
+
+
+def unwrap_phase_map(phase_map: PhaseMap, method="quality", mask=None, min_modulation=None) -> UnwrappedMap:
+    """Continuous phase of a region: unwrap its carrier-free phase in two dimensions.
+
+    The carrier is removed before unwrapping, so the unwrapper only has to follow the
+    phase the surface adds (few or no wraps for a flat face); the carrier ramp, known
+    exactly, is added back to give the continuous fringe phase. Unwrapping uses
+    :mod:`interflib.fringe.unwrap`; with ``method="quality"`` the modulation ``b`` is the
+    quality map, so the integration goes through the best-modulated pixels first.
+
+    Two limits come from the demodulation, not from the unwrapping. A linear term of the
+    surface cannot be told apart from the carrier, so ``object_phase`` keeps only what
+    departs from a plane fitted with the carrier estimate. And a curved surface makes the
+    carrier-free phase non-periodic in the region: its jump between opposite ends leaks
+    into the pass band and bends the phase near the ends (in a test with 1.2 fringes of
+    Gaussian relief, some 0.03 to 0.08 rad within 60 to 150 px of the ends); a wider
+    ``bandwidth`` or reading the phase farther inside reduces it.
+
+    Parameters
+    ----------
+    phase_map : PhaseMap
+        Output of :func:`demodulate_2d`.
+    method : {"quality", "goldstein", "itoh"}
+        Unwrapping algorithm. ``"itoh"`` takes no mask.
+    mask : array_like of bool, optional
+        Valid pixels of the region (the pupil): for instance, excluding the dark ends of a
+        platen strip. Pixels outside it are ``nan`` in the result.
+    min_modulation : float, optional
+        If given, pixels with modulation below this fraction of the median modulation are
+        also left out.
+
+    Returns
+    -------
+    UnwrappedMap
+    """
+    shape = phase_map.object_phase.shape
+    valid = np.ones(shape, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
+    if valid.shape != shape:
+        raise ValueError("mask shape %s does not match the region %s" % (valid.shape, shape))
+    if min_modulation is not None:
+        valid = valid & (phase_map.modulation >= min_modulation * np.nanmedian(phase_map.modulation))
+    valid = valid & np.isfinite(phase_map.object_phase)
+    wrapped = np.angle(np.exp(1j * phase_map.object_phase))
+    if method == "quality":
+        obj = unwrap_quality_guided(wrapped, quality=phase_map.modulation, mask=valid)
+    elif method == "goldstein":
+        obj = unwrap_goldstein(wrapped, mask=valid)
+    elif method == "itoh":
+        if not valid.all():
+            raise ValueError("the Itoh unwrapper takes no mask; use 'quality' or 'goldstein'")
+        obj = unwrap_itoh(wrapped)
+    else:
+        raise ValueError("unknown unwrapping method %r" % (method,))
+    g_x, g_y = phase_map.carrier
+    yy = (phase_map.y - phase_map.y[0])[:, None]
+    xx = (phase_map.x - phase_map.x[0])[None, :]
+    obj = np.where(valid, obj, np.nan)
+    return UnwrappedMap(x=phase_map.x, y=phase_map.y, object_phase=obj,
+                        phase=obj + 2 * np.pi * (g_x * xx + g_y * yy), mask=valid, method=method)
 
 
 def map_column_phases(phase_map: PhaseMap, img, x_centres, rows, eval_row, half_width=2, deg=1,
