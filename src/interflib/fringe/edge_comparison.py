@@ -299,10 +299,52 @@ def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, s
     -------
     EdgeFractionResult
     """
-    xs_platen = np.arange(edge_x - span, edge_x - gap + 1, step)
-    xs_block = np.arange(edge_x + gap, edge_x + span + 1, step)
+    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
     platen = column_phases(img, xs_platen, rows, eval_row, period_guess, half_width)
     block = column_phases(img, xs_block, rows, eval_row, period_guess, half_width)
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
+
+
+def side_band_centres(edge_x, gap, span, step):
+    """Band centre columns on the platen (left) and block (right) sides of the edge.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        ``(xs_platen, xs_block)``, from ``gap`` to ``span`` px away from ``edge_x`` every
+        ``step`` px.
+    """
+    return (np.arange(edge_x - span, edge_x - gap + 1, step),
+            np.arange(edge_x + gap, edge_x + span + 1, step))
+
+
+def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row, gap=30, span=180,
+                     deg=1, r2_min=0.3) -> EdgeFractionResult:
+    """Extrapolate the column phases of each side to the edge and take their difference.
+
+    This is the comparison step of :func:`edge_fraction`, independent of how the column
+    phases were obtained (sinusoidal fit here, Fourier demodulation in
+    :mod:`interflib.fringe.fourier`).
+
+    Parameters
+    ----------
+    platen, block : ColumnPhases
+        Column phases left and right of the edge, referred to ``eval_row``.
+    edge_x : float
+        Edge column, px.
+    eval_row : float
+        Evaluation row the phases refer to.
+    gap, span : int
+        Only bands from ``gap`` to ``span`` px away from the edge enter the side fits.
+    deg : int
+        Degree of the polynomial fitted on each side.
+    r2_min : float
+        Bands with a smaller coefficient of determination are left out of the fits.
+
+    Returns
+    -------
+    EdgeFractionResult
+    """
     cp = side_fit(platen, (edge_x - span, edge_x - gap), deg, r2_min)
     cb = side_fit(block, (edge_x + gap, edge_x + span), deg, r2_min)
     phi_p, phi_b = np.polyval(cp, edge_x), np.polyval(cb, edge_x)
