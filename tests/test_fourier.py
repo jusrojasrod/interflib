@@ -4,10 +4,14 @@ import pytest
 
 from interflib.fringe.edge_comparison import column_phases
 from interflib.fringe.fourier import (
+    demodulate_2d,
     demodulate_columns,
     estimate_carrier,
+    estimate_carrier_2d,
     fourier_column_phases,
     fourier_edge_fraction,
+    fourier_edge_fraction_2d,
+    map_column_phases,
 )
 
 # --------------------------------------------------------------------------------------
@@ -127,4 +131,85 @@ def test_fourier_edge_fraction_under_non_uniform_illumination():
 def test_fourier_edge_fraction_with_noise(seed):
     res = fourier_edge_fraction(_scene(0.42, tilt_deg=1.0, noise=40.0, seed=seed), EDGE_X, ROWS,
                                 EVAL_ROW, fft_rows=FFT_ROWS)
+    assert _circular_gap(res.fraction, 0.42) < 3e-3
+
+
+# --------------------------------------------------------------------------------------
+# Two-dimensional demodulation
+# --------------------------------------------------------------------------------------
+PLATEN_COLS = (EDGE_X - 182, EDGE_X - 27)      # the platen region used by the 2-D edge fraction
+
+
+@pytest.mark.parametrize("tilt_deg", [0.0, 2.0, 14.0])
+def test_estimate_carrier_2d(tilt_deg):
+    img = _scene(0.3, tilt_deg=tilt_deg)
+    g_x, g_y = estimate_carrier_2d(img[FFT_ROWS[0]:FFT_ROWS[1], PLATEN_COLS[0]:PLATEN_COLS[1]])
+    assert g_y == pytest.approx(1.0 / PERIOD, rel=1e-3)
+    assert g_x == pytest.approx(np.tan(np.radians(tilt_deg)) / PERIOD, abs=2e-5)
+
+
+def test_2d_too_few_fringes_and_bad_inputs_raise():
+    img = _scene(0.3, period=200.0)
+    with pytest.raises(ValueError):
+        estimate_carrier_2d(img[FFT_ROWS[0]:FFT_ROWS[1], PLATEN_COLS[0]:PLATEN_COLS[1]])
+    with pytest.raises(ValueError):
+        demodulate_2d(_scene(0.3), FFT_ROWS, PLATEN_COLS, bandwidth=1.0)
+    with pytest.raises(ValueError):
+        demodulate_2d(_scene(0.3), (100, 700), PLATEN_COLS)
+
+
+def test_demodulate_2d_recovers_phase_background_and_modulation():
+    """Inside the region, away from its ends, the map matches the true platen phase.
+
+    Near the ends the background and the conjugate lobe leak into the pass band (about
+    0.01 rad within 60 rows or 30 columns of an end in this scene), so the check stays
+    100 rows and 50 columns inside.
+    """
+    tilt_deg = 3.0
+    m = demodulate_2d(_scene(0.3, tilt_deg=tilt_deg), FFT_ROWS, PLATEN_COLS)
+    y = m.y[:, None] - EVAL_ROW
+    x = m.x[None, :] - EDGE_X
+    true = 2 * np.pi * (y / PERIOD + x * np.tan(np.radians(tilt_deg)) / PERIOD) + 0.7 + np.pi / 2
+    inner = (slice(100, -100), slice(50, -50))
+    diff = np.angle(np.exp(1j * (m.phase - true)))[inner]
+    assert np.max(np.abs(diff)) < 5e-3
+    assert np.allclose(m.modulation[inner], 800.0, rtol=5e-3)
+    assert np.allclose(m.background[inner], 1000.0, rtol=5e-3)
+
+
+def test_map_column_phases_match_the_column_method():
+    img = _scene(0.3, tilt_deg=2.0)
+    xs = np.arange(PLATEN_COLS[0] + 2, PLATEN_COLS[1] - 2, 10)
+    m = demodulate_2d(img, FFT_ROWS, PLATEN_COLS)
+    two_d = map_column_phases(m, img, xs, ROWS, EVAL_ROW)
+    cols = fourier_column_phases(img, xs, ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    assert np.max(np.abs(np.angle(np.exp(1j * (two_d.phase - cols.phase))))) < 1e-3
+    with pytest.raises(ValueError):
+        map_column_phases(m, img, [EDGE_X + 50], ROWS, EVAL_ROW)
+
+
+@pytest.mark.parametrize("fraction", [0.05, 0.3, 0.62, 0.95])
+def test_fourier_edge_fraction_2d_recovers_the_true_fraction(fraction):
+    res = fourier_edge_fraction_2d(_scene(fraction), EDGE_X, ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    assert _circular_gap(res.fraction, fraction) < 1e-4
+
+
+@pytest.mark.parametrize("tilt_deg", [-1.0, 0.0, 2.0, 5.0, 14.0])
+def test_fourier_edge_fraction_2d_is_invariant_to_a_common_fringe_tilt(tilt_deg):
+    res = fourier_edge_fraction_2d(_scene(0.3, tilt_deg=tilt_deg, wedge_x=1e-4, wedge_y=5e-4), EDGE_X,
+                                   ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    assert _circular_gap(res.fraction, 0.3) < 1e-4
+    assert res.slope_platen == pytest.approx(np.tan(np.radians(tilt_deg)) / PERIOD, abs=1e-6)
+
+
+def test_fourier_edge_fraction_2d_under_non_uniform_illumination_with_wedge():
+    res = fourier_edge_fraction_2d(_scene(0.3, tilt_deg=1.0, wedge_x=1e-4, wedge_y=5e-4, illumination=True),
+                                   EDGE_X, ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    assert _circular_gap(res.fraction, 0.3) < 1e-4
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_fourier_edge_fraction_2d_with_noise(seed):
+    res = fourier_edge_fraction_2d(_scene(0.42, tilt_deg=1.0, noise=40.0, seed=seed), EDGE_X, ROWS,
+                                   EVAL_ROW, fft_rows=FFT_ROWS)
     assert _circular_gap(res.fraction, 0.42) < 3e-3

@@ -18,6 +18,7 @@ Present:
                      which cancels any phase term common to both surfaces
 - ``wedge``          block-platen wedge along x and y from the same comparison, in
                      fringes/px and, given the pixel scale, in microradians
-- ``fourier``        single-shot Fourier (spatial-carrier) demodulation along each column
-                     and the edge-column fringe fraction from the demodulated phases
+- ``fourier``        single-shot Fourier (spatial-carrier) demodulation, along each column
+                     or in two dimensions over a region on one surface (synchronous
+                     detection), and the edge-column fringe fraction from either
 """

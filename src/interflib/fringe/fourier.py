@@ -19,6 +19,14 @@ column to column, which the method follows. The horizontal ends of the block (it
 or bottom face edge, when they are in the field) do cut the columns, so the transform
 span ``fft_rows`` must stay clear of them.
 
+A two-dimensional variant, :func:`demodulate_2d`, transforms a whole rectangular region
+that lies on one surface (the platen beside the block, or the block face) and filters
+the carrier lobe in two dimensions, by synchronous detection: the region is multiplied by
+``exp(-i 2 pi (g_x x + g_y y))``, low-pass filtered and shifted back. It limits the
+bandwidth along ``x`` as well as along ``y`` and returns a phase map of the region;
+:func:`fourier_edge_fraction_2d` demodulates a platen region and a block region separately
+and compares them at the edge like the column variant.
+
 The phase is returned in the convention of :mod:`interflib.fringe.edge_comparison`
 (the phase ``phi`` of ``A sin(w y + phi) + C`` with ``w > 0``), so the column phases of
 the two methods are directly comparable and the edge comparison is shared: the column
@@ -220,10 +228,16 @@ def fourier_column_phases(img, x_centres, rows, eval_row, fft_rows=None, carrier
         raise ValueError("rows must lie inside fft_rows")
     demod = demodulate_columns(img, x_centres, fft_rows, carrier, bandwidth, half_width, taper, min_cycles)
     sel = slice(rows[0] - fft_rows[0], rows[1] - fft_rows[0])
-    y = demod.y[sel] - eval_row
-    unwrapped = np.unwrap(demod.phase[sel], axis=0)
-    profiles = _bands(img, x_centres, rows, half_width)
-    corr = 1.0 / (2 * bandwidth * demod.carrier)
+    return _phases_at_row(demod.phase[sel], demod.background[sel], demod.modulation[sel],
+                          _bands(img, x_centres, rows, half_width), demod.y[sel], eval_row, deg,
+                          1.0 / (2 * bandwidth * demod.carrier), x_centres)
+
+
+def _phases_at_row(band_phase, background, modulation, profiles, y, eval_row, deg, corr, x_centres):
+    # Shared by the column and the two-dimensional demodulation: unwrap each band phase
+    # along y, fit a polynomial over the rows given and read it at eval_row.
+    y = np.asarray(y, dtype=float) - eval_row
+    unwrapped = np.unwrap(band_phase, axis=0)
     n_bands = unwrapped.shape[1]
     phase = np.empty(n_bands)
     period = np.empty(n_bands)
@@ -239,7 +253,7 @@ def fourier_column_phases(img, x_centres, rows, eval_row, fft_rows=None, carrier
         phase_error[j] = np.sqrt(cov[-1, -1])
         slope = coef[-2] if deg >= 1 else np.nan
         period[j] = 2 * np.pi / slope if slope else np.nan
-        model = demod.background[sel, j] + demod.modulation[sel, j] * np.sin(demod.phase[sel, j])
+        model = background[:, j] + modulation[:, j] * np.sin(band_phase[:, j])
         ss_res = np.sum((profiles[:, j] - model) ** 2)
         ss_tot = np.sum((profiles[:, j] - profiles[:, j].mean()) ** 2)
         r2[j] = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
@@ -294,4 +308,259 @@ def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=No
                   deg=deg_y, taper=taper, min_cycles=min_cycles)
     platen = fourier_column_phases(img, xs_platen, rows, eval_row, **kwargs)
     block = fourier_column_phases(img, xs_block, rows, eval_row, **kwargs)
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
+
+
+# --------------------------------------------------------------------------------------
+# Two-dimensional demodulation
+# --------------------------------------------------------------------------------------
+@dataclass
+class PhaseMap:
+    """Two-dimensional Fourier demodulation of a rectangular region.
+
+    Attributes
+    ----------
+    x, y : numpy.ndarray
+        Columns and rows of the region.
+    phase : numpy.ndarray
+        Wrapped phase, rows x columns, radians in ``[0, 2 pi)``, in the sine convention;
+        it includes the carrier ``2 pi (g_x x + g_y y)``.
+    modulation : numpy.ndarray
+        Fringe amplitude ``b``, rows x columns.
+    background : numpy.ndarray
+        Low-pass background ``a``, rows x columns.
+    carrier : tuple of float
+        ``(g_x, g_y)``, fringes per px, with ``g_y > 0``.
+    analytic : numpy.ndarray
+        Complex analytic signal ``(b / 2) exp(i phi)`` of the cosine convention, kept so
+        that bands can be averaged as complex numbers.
+    """
+
+    x: np.ndarray
+    y: np.ndarray
+    phase: np.ndarray
+    modulation: np.ndarray
+    background: np.ndarray
+    carrier: tuple
+    analytic: np.ndarray
+
+
+def _region(img, rows, cols):
+    img = np.asarray(img, dtype=float)
+    (y0, y1), (x0, x1) = rows, cols
+    if y0 < 0 or x0 < 0 or y1 > img.shape[0] or x1 > img.shape[1] or y1 <= y0 or x1 <= x0:
+        raise ValueError("region falls outside the image")
+    return img[y0:y1, x0:x1]
+
+
+def _parabolic_offset(values):
+    la, lb, lc = np.log(np.asarray(values) + 1e-300)
+    return 0.5 * (la - lc) / (la - 2 * lb + lc)
+
+
+def estimate_carrier_2d(region, min_cycles=4.0):
+    """Carrier ``(g_x, g_y)`` of a region from its two-dimensional power spectrum.
+
+    The global spectral peak outside the zero-frequency bins is taken, on the side with
+    ``g_y > 0`` (the two lobes are symmetric), and refined to a fraction of a bin along
+    each axis by a parabola through the logarithm of the neighbouring samples (zero-padded
+    fourfold).
+
+    Parameters
+    ----------
+    region : numpy.ndarray
+        Interferogram region, rows x columns, with fringes roughly horizontal.
+    min_cycles : float
+        Lowest carrier accepted along ``y``, in fringes over the region height.
+
+    Returns
+    -------
+    tuple of float
+        ``(g_x, g_y)``, fringes per px.
+
+    Raises
+    ------
+    ValueError
+        If the peak gives fewer than ``min_cycles`` fringes along ``y``.
+    """
+    region = np.asarray(region, dtype=float)
+    ny, nx = region.shape
+    centred = (region - region.mean()) * np.outer(np.hanning(ny), np.hanning(nx))
+    py, px = 4 * int(2 ** np.ceil(np.log2(ny))), 4 * int(2 ** np.ceil(np.log2(nx)))
+    power = np.abs(np.fft.fft2(centred, s=(py, px))) ** 2
+    fy, fx = np.fft.fftfreq(py), np.fft.fftfreq(px)
+    dc = (np.abs(fy)[:, None] < 1.5 / ny) & (np.abs(fx)[None, :] < 1.5 / nx)
+    ky, kx = np.unravel_index(np.argmax(np.where(~dc & (fy[:, None] > 0), power, -np.inf)), power.shape)
+    g_y = fy[ky] + fy[1] * _parabolic_offset(power[[(ky - 1) % py, ky, (ky + 1) % py], kx])
+    g_x = fx[kx] + fx[1] * _parabolic_offset(power[ky, [(kx - 1) % px, kx, (kx + 1) % px]])
+    if g_y * ny < min_cycles:
+        raise ValueError("no carrier above %.1f fringes over %d rows" % (min_cycles, ny))
+    return float(g_x), float(g_y)
+
+
+def demodulate_2d(img, rows, cols, carrier=None, bandwidth=0.5, taper=0.0, min_cycles=4.0) -> PhaseMap:
+    """Wrapped phase of a rectangular region by two-dimensional Fourier filtering.
+
+    The region is (optionally) tapered, transformed in two dimensions, multiplied by a
+    radial raised-cosine pass band of radius ``bandwidth * |g|`` centred on the carrier
+    lobe ``g = (g_x, g_y)``, and transformed back. Unlike :func:`demodulate_columns`, the
+    pass band follows the lobe wherever the fringe tilt places it and limits the
+    bandwidth along ``x`` as well as along ``y``. The region must lie entirely on one
+    surface: a block edge inside it would spread over the whole spectrum.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Interferogram, rows x columns.
+    rows, cols : tuple of int
+        Region ``(y0, y1)`` and ``(x0, x1)``.
+    carrier : tuple of float, optional
+        ``(g_x, g_y)``, fringes per px. Estimated from the region if omitted.
+    bandwidth : float
+        Radius of the pass band relative to ``|g|``, in ``(0, 1)``.
+    taper : float
+        Fraction of each side tapered with a Tukey window.
+    min_cycles : float
+        Passed to :func:`estimate_carrier_2d`.
+
+    Returns
+    -------
+    PhaseMap
+    """
+    if not 0.0 < bandwidth < 1.0:
+        raise ValueError("bandwidth must lie in (0, 1)")
+    region = _region(img, rows, cols)
+    ny, nx = region.shape
+    if carrier is None:
+        carrier = estimate_carrier_2d(region, min_cycles)
+    g_x, g_y = carrier
+    if g_y * ny < min_cycles:
+        raise ValueError("carrier gives fewer than %.1f fringes over %d rows" % (min_cycles, ny))
+    window = np.outer(tukey(ny, taper), tukey(nx, taper)) if taper > 0 else np.ones((ny, nx))
+    fy, fx = np.fft.fftfreq(ny)[:, None], np.fft.fftfreq(nx)[None, :]
+    radius = bandwidth * np.hypot(g_x, g_y)
+    r_low = np.hypot(fx, fy)
+    low = np.where(r_low < radius, np.cos(np.pi * r_low / (2 * radius)) ** 2, 0.0)
+    # Synchronous detection: shift the carrier lobe to zero frequency in the space domain
+    # before filtering. The shifted fringe term varies slowly and is nearly continuous across
+    # the ends of the region, so the circular transform does not leak it; filtering the lobe
+    # where it lies would spread the phase jump between opposite ends (the carrier phase is
+    # not periodic in the region) over the columns next to the block edge.
+    yy, xx = np.arange(ny)[:, None], np.arange(nx)[None, :]
+    reference = np.exp(-2j * np.pi * (g_x * xx + g_y * yy))
+    baseband = np.fft.ifft2(np.fft.fft2(region * window * reference) * low)
+    analytic = baseband * np.conj(reference)
+    background = np.fft.ifft2(np.fft.fft2(region * window) * low).real
+    with np.errstate(invalid="ignore", divide="ignore"):
+        analytic = analytic / window
+        background = background / window
+    # angle(analytic) is the phase of b*cos(.); the sine convention adds pi/2
+    phase = (np.angle(analytic) + np.pi / 2) % (2 * np.pi)
+    return PhaseMap(x=np.arange(*cols), y=np.arange(*rows), phase=phase, modulation=2 * np.abs(analytic),
+                    background=background, carrier=(float(g_x), float(g_y)), analytic=analytic)
+
+
+def map_column_phases(phase_map: PhaseMap, img, x_centres, rows, eval_row, half_width=2, deg=1,
+                      bandwidth=0.5) -> ColumnPhases:
+    """Phase at ``eval_row`` of column bands taken from a two-dimensional phase map.
+
+    Each band averages the analytic signal of its ``2 * half_width + 1`` columns as
+    complex numbers; from there on it is the same fit along ``y`` as
+    :func:`fourier_column_phases`.
+
+    Parameters
+    ----------
+    phase_map : PhaseMap
+        Output of :func:`demodulate_2d`; the bands and ``rows`` must lie inside it.
+    img : numpy.ndarray
+        The interferogram the map was computed from (for the ``r2`` diagnostic).
+    x_centres : array_like of int
+        Centre column of each band.
+    rows : tuple of int
+        Rows whose pixel phases enter the fit.
+    eval_row : float
+        Row the phase is referred to.
+    half_width, deg : int
+        Band half-width and degree of the fit along ``y``.
+    bandwidth : float
+        The ``bandwidth`` used for the map (sets the correlation length of ``phase_error``).
+
+    Returns
+    -------
+    ColumnPhases
+    """
+    x_centres = np.asarray(x_centres, dtype=int)
+    x0, y0 = int(phase_map.x[0]), int(phase_map.y[0])
+    if (x_centres.min() - half_width < x0 or x_centres.max() + half_width > phase_map.x[-1]
+            or rows[0] < y0 or rows[1] > phase_map.y[-1] + 1):
+        raise ValueError("bands or rows fall outside the phase map")
+    rsel = slice(rows[0] - y0, rows[1] - y0)
+    bands = [slice(x - half_width - x0, x + half_width + 1 - x0) for x in x_centres]
+    analytic = np.stack([phase_map.analytic[rsel, b].mean(axis=1) for b in bands], axis=1)
+    background = np.stack([phase_map.background[rsel, b].mean(axis=1) for b in bands], axis=1)
+    band_phase = (np.angle(analytic) + np.pi / 2) % (2 * np.pi)
+    corr = 1.0 / (2 * bandwidth * np.hypot(*phase_map.carrier))
+    return _phases_at_row(band_phase, background, 2 * np.abs(analytic), _bands(img, x_centres, rows, half_width),
+                          phase_map.y[rsel], eval_row, deg, corr, x_centres)
+
+
+def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier=None, bandwidth=0.5,
+                             gap=30, span=180, step=5, half_width=2, deg_y=1, deg=1, r2_min=0.3,
+                             taper=0.0, min_cycles=4.0, inner=12, outer=20) -> EdgeFractionResult:
+    """Fringe fraction at the edge column with two-dimensional Fourier demodulation.
+
+    A platen region left of the edge and a block region right of it are demodulated
+    separately with :func:`demodulate_2d`, so the edge lies in neither, each with its own
+    carrier unless one is given. The column phases of the bands from ``gap`` to ``span``
+    px from the edge are then read from each map and compared at the edge exactly as in
+    :func:`fourier_edge_fraction`.
+
+    The regions reach beyond the bands, from ``inner`` px off the edge to ``span + outer``
+    px (clipped to the image), because the phase near the ends of a region is degraded by
+    spectral leakage of the background and of the conjugate lobe. With real images the
+    result depends on these margins when the bands come close to the ends. Both regions
+    must stay on their surface: ``inner`` clear of the dark line of the edge and well
+    below ``gap``, and ``span + outer`` short of the far edge of the platen strip (or of
+    the block face).
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Interferogram, rows x columns.
+    edge_x : float
+        Edge column, px.
+    rows : tuple of int
+        Rows whose pixel phases enter the fit along ``y``.
+    eval_row : float
+        Evaluation row; the fraction refers to it.
+    fft_rows : tuple of int, optional
+        Rows of the two regions; ``rows`` if omitted.
+    carrier, bandwidth, taper, min_cycles
+        Passed to :func:`demodulate_2d`.
+    gap, span, step, half_width, deg_y, deg, r2_min
+        As in :func:`fourier_edge_fraction`.
+    inner, outer : int
+        Region margins: each region runs from ``inner`` px off the edge to ``span + outer``
+        px away from it.
+
+    Returns
+    -------
+    EdgeFractionResult
+    """
+    fft_rows = rows if fft_rows is None else fft_rows
+    if not (fft_rows[0] <= rows[0] and rows[1] <= fft_rows[1]):
+        raise ValueError("rows must lie inside fft_rows")
+    if not 0 <= inner < gap - half_width:
+        raise ValueError("inner must lie between 0 and gap - half_width")
+    width = np.asarray(img).shape[1]
+    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    xs_platen, xs_block = xs_platen.astype(int), xs_block.astype(int)
+    cols_platen = (max(0, int(np.floor(edge_x - span - outer)) - half_width), int(np.floor(edge_x - inner)))
+    cols_block = (int(np.ceil(edge_x + inner)), min(width, int(np.ceil(edge_x + span + outer)) + half_width + 1))
+    # Each region gets its own carrier unless one is given: the synchronous detection of
+    # demodulate_2d needs the carrier of the surface it demodulates, and the block-platen
+    # wedge makes the two differ.
+    maps = [demodulate_2d(img, fft_rows, c, carrier, bandwidth, taper, min_cycles) for c in (cols_platen, cols_block)]
+    platen, block = [map_column_phases(m, img, xs, rows, eval_row, half_width, deg_y, bandwidth)
+                     for m, xs in zip(maps, (xs_platen, xs_block))]
     return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
