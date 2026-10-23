@@ -16,6 +16,10 @@ Three tools that help to judge a take before (or besides) measuring the fringe f
   widths. On real images there is no true value to compare with, but a fraction that
   moves with the filter reveals a systematic effect of the demodulation (edge leakage,
   curvature, non-uniform illumination); the spread is a measure of it.
+- :func:`surface_phase` unwraps the carrier-free phase of one surface of the overview and
+  fits a plane: the plane is the tilt of the surface relative to the carrier (for the block,
+  the block-platen wedge) and the residual its curvature, which the cyclic overview map
+  mixes together.
 
 This module has no I/O side effects: it takes and returns arrays.
 """
@@ -30,6 +34,7 @@ from .fourier import (
     estimate_carrier_2d,
     fourier_edge_fraction,
     fourier_edge_fraction_2d,
+    unwrap_phase_map,
 )
 
 
@@ -190,3 +195,64 @@ def bandwidth_sensitivity(img, edge_x, rows, eval_row, bandwidths=(0.3, 0.4, 0.5
     centred = (fractions - fractions[0] + 0.5) % 1.0 - 0.5
     return BandwidthSensitivity(bandwidth=bws, fraction=fractions, spread=float(centred.max() - centred.min()),
                                 method=method)
+
+
+@dataclass
+class SurfacePhase:
+    """Carrier-free phase of one surface, unwrapped, with its best-fit plane removed.
+
+    Attributes
+    ----------
+    phase : numpy.ndarray
+        Unwrapped carrier-free phase in fringes (``nan`` outside ``mask``), defined up to a
+        constant.
+    plane : tuple of float
+        ``(c, g_x, g_y)`` of the least-squares plane ``c + g_x x + g_y y`` (fringes, px):
+        the tilt of the surface relative to the carrier.
+    residual : numpy.ndarray
+        ``phase`` minus the plane: curvature and everything that is not a tilt.
+    mask : numpy.ndarray
+        Pixels of the surface.
+    """
+
+    phase: np.ndarray
+    plane: tuple
+    residual: np.ndarray
+    mask: np.ndarray
+
+
+def surface_phase(phase_map: PhaseMap, mask, method="quality") -> SurfacePhase:
+    """Unwrap the carrier-free phase of one surface and separate its tilt from the rest.
+
+    The whole-field map of :func:`field_overview` mixes, on each surface, its tilt relative
+    to the carrier (for the block, the block-platen wedge when the carrier comes from the
+    platen) and its departure from a plane (curvature of the wavefront and of the surface).
+    Unwrapping one surface at a time and fitting a plane separates the two: the difference
+    of the block and platen planes is the wedge, and the residual is the curvature.
+
+    Parameters
+    ----------
+    phase_map : PhaseMap
+        Usually the output of :func:`field_overview`.
+    mask : array_like of bool
+        Pixels of the surface (for instance the modulation mask restricted to one side of
+        the edge, kept a few tens of pixels away from it).
+    method : str
+        Unwrapping method, passed to :func:`interflib.fringe.fourier.unwrap_phase_map`.
+
+    Returns
+    -------
+    SurfacePhase
+    """
+    mask = np.asarray(mask, dtype=bool)
+    unw = unwrap_phase_map(phase_map, method=method, mask=mask)
+    phase = unw.object_phase / (2 * np.pi)
+    valid = unw.mask & np.isfinite(phase)
+    if valid.sum() < 3:
+        raise ValueError("too few pixels in the surface mask")
+    yy, xx = np.meshgrid(phase_map.y.astype(float), phase_map.x.astype(float), indexing="ij")
+    design = np.column_stack([np.ones(valid.sum()), xx[valid], yy[valid]])
+    (c, g_x, g_y), *_ = np.linalg.lstsq(design, phase[valid], rcond=None)
+    residual = np.where(valid, phase - (c + g_x * xx + g_y * yy), np.nan)
+    return SurfacePhase(phase=np.where(valid, phase, np.nan), plane=(float(c), float(g_x), float(g_y)),
+                        residual=residual, mask=valid)

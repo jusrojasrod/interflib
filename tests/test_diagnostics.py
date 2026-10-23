@@ -3,7 +3,8 @@ and the sensitivity of the fraction to the filter width."""
 import numpy as np
 import pytest
 
-from interflib.fringe.diagnostics import bandwidth_sensitivity, edge_from_modulation, field_overview
+from interflib.fringe.diagnostics import (bandwidth_sensitivity, edge_from_modulation, field_overview,
+                                         surface_phase)
 from interflib.fringe.fourier import modulation_mask
 
 from .test_fourier import EDGE_X, EVAL_ROW, FFT_ROWS, ROWS, _scene
@@ -69,3 +70,21 @@ def test_bandwidth_sensitivity_is_small_on_a_clean_scene(method):
 def test_bandwidth_sensitivity_rejects_an_unknown_method():
     with pytest.raises(ValueError):
         bandwidth_sensitivity(_scene(0.3), EDGE_X, ROWS, EVAL_ROW, method="pll")
+
+
+def test_surface_phase_separates_the_wedge_from_the_curvature():
+    """Platen and block of one overview: the block plane minus the platen plane is the
+    injected wedge, and with flat surfaces the residual is nil."""
+    wedge_x, wedge_y = -1.5e-4, 6e-4
+    img = _scene(0.25, tilt_deg=2.0, wedge_x=wedge_x, wedge_y=wedge_y)
+    o = field_overview(img, FFT_ROWS, (20, 460), carrier_cols=PLATEN_COLS)
+    yy, xx = np.meshgrid(o.y, o.x, indexing="ij")
+    inner = (yy > 160) & (yy < 440)
+    platen = surface_phase(o, inner & (xx > 60) & (xx < EDGE_X - 40))
+    block = surface_phase(o, inner & (xx > EDGE_X + 40) & (xx < 420))
+    assert block.plane[1] - platen.plane[1] == pytest.approx(wedge_x, abs=2e-5)
+    assert block.plane[2] - platen.plane[2] == pytest.approx(wedge_y, abs=2e-5)
+    assert np.nanmax(np.abs(platen.residual)) < 0.01 and np.nanmax(np.abs(block.residual)) < 0.01
+    assert np.isnan(platen.phase[~platen.mask]).all()
+    with pytest.raises(ValueError):
+        surface_phase(o, np.zeros_like(inner))
