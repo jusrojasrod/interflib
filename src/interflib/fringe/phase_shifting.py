@@ -30,8 +30,11 @@ Optical Metrology*, 2014, ch. 2).
 
 Phase *unwrapping* is deliberately out of scope here: these functions return the wrapped
 phase in ``(-pi, pi]``. For the gauge-block fringe fraction the full-field unwrap is not
-needed -- :func:`fraction_from_phase` reads the block-vs-platen fraction directly from the
-wrapped map -- so unwrapping is left as a separate design decision.
+needed: :func:`edge_fraction_from_phase` reads the block-vs-platen fraction from the
+wrapped map with the two phases compared at the same column, the edge, as
+:mod:`interflib.fringe.edge_comparison` does for one image. :func:`fraction_from_phase`
+compares two strips at different columns instead and is exact only when the phase does
+not change along ``x`` other than by the block step.
 
 This module has no I/O side effects: it takes and returns arrays.
 """
@@ -39,6 +42,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .edge_comparison import ColumnPhases, EdgeFractionResult, fraction_at_edge, side_band_centres
 from .models import signed_fraction
 
 
@@ -224,6 +228,11 @@ def fraction_from_phase(phase, roi_platen, roi_block, order_sign=1) -> float:
     single intensity image, but from an already-demodulated phase map, so a linear phase
     difference replaces the nonlinear sinusoidal fit.
 
+    The two strips sit at different columns, so any phase gradient along ``x`` common to
+    both surfaces (fringes not exactly along the rows) adds ``g_x * dx`` to ``F``, with
+    ``dx`` the strip separation. :func:`edge_fraction_from_phase` compares the phases at
+    the same column and cancels it; this function is kept to reproduce strip analyses.
+
     Parameters
     ----------
     phase : numpy.ndarray
@@ -263,3 +272,115 @@ def fraction_from_phase(phase, roi_platen, roi_block, order_sign=1) -> float:
     block_line = _circular_mean(block, axis=1)            # per-row phase over the block
     per_row_diff = block_line - platen_line               # tilt cancels row by row
     return signed_fraction(_circular_mean(per_row_diff), order_sign)
+
+
+def column_phases_from_map(phase, x_centres, rows, eval_row, modulation=None, half_width=2,
+                           deg=1) -> ColumnPhases:
+    """Phase at ``eval_row`` of column bands taken from a wrapped-phase map.
+
+    Each band averages ``b exp(i phi)`` over its ``2 * half_width + 1`` columns (``b`` the
+    modulation, so faint pixels weigh less; uniform if ``modulation`` is None), unwraps the
+    band phase along ``y`` and fits a polynomial of degree ``deg`` in ``y - eval_row``; the
+    constant term is the phase at ``eval_row``. Phases are returned in the convention of
+    :mod:`interflib.fringe.edge_comparison` (the ``phi`` of ``A sin(w y + phi)``), that is
+    ``pi / 2`` above the phase of ``a + b cos(phi + delta)``.
+
+    Parameters
+    ----------
+    phase : numpy.ndarray
+        Wrapped phase map, radians (e.g. :attr:`PhaseStepResult.phase`).
+    x_centres : array_like of int
+        Centre column of each band.
+    rows : tuple of int
+        Rows ``(y0, y1)`` that enter the fit along ``y``.
+    eval_row : float
+        Row the phase is referred to.
+    modulation : numpy.ndarray, optional
+        Modulation ``b`` (e.g. :attr:`PhaseStepResult.modulation`), same shape as ``phase``.
+    half_width, deg : int
+        Band half-width and degree of the fit along ``y``.
+
+    Returns
+    -------
+    ColumnPhases
+        ``r2`` holds the mean resultant length of the fit residuals,
+        ``|mean exp(i (Phi - fit))|`` in ``[0, 1]`` (1 for a clean band, near 0 for noise),
+        because a phase map has no intensity profile to compare against; it plays the same
+        role in the ``r2_min`` selection. ``phase_error`` is the standard uncertainty of the
+        constant term from the residual scatter, assuming independent pixels. ``period`` is
+        ``2 pi`` over the fitted slope (NaN with ``deg = 0`` or no slope).
+    """
+    phase = np.asarray(phase, dtype=float)
+    weight = np.ones_like(phase) if modulation is None else np.asarray(modulation, dtype=float)
+    x_centres = np.asarray(x_centres, dtype=int)
+    y0, y1 = rows
+    if (x_centres.min() - half_width < 0 or x_centres.max() + half_width >= phase.shape[1]
+            or y0 < 0 or y1 > phase.shape[0]):
+        raise ValueError("column bands or rows fall outside the phase map")
+
+    signal = weight[y0:y1] * np.exp(1j * phase[y0:y1])
+    y = np.arange(y0, y1, dtype=float) - eval_row
+    design = np.vander(y, deg + 1)
+    pseudo = np.linalg.pinv(design)
+    unscaled = np.linalg.inv(design.T @ design)
+    dof = max(len(y) - (deg + 1), 1)
+
+    n = len(x_centres)
+    out = {key: np.full(n, np.nan) for key in ("phase", "period", "r2", "phase_error")}
+    for j, x in enumerate(x_centres):
+        band = signal[:, x - half_width:x + half_width + 1].mean(axis=1)
+        unwrapped = np.unwrap(np.angle(band) + np.pi / 2)
+        coef = pseudo @ unwrapped
+        resid = unwrapped - design @ coef
+        out["phase"][j] = coef[-1] % (2 * np.pi)
+        out["phase_error"][j] = np.sqrt(unscaled[-1, -1] * (resid @ resid) / dof)
+        out["r2"][j] = np.abs(np.mean(np.exp(1j * resid)))
+        if deg >= 1 and coef[-2] != 0:
+            out["period"][j] = 2 * np.pi / coef[-2]
+    return ColumnPhases(x=x_centres, phase=out["phase"], phase_unwrapped=np.unwrap(out["phase"]),
+                        period=out["period"], r2=out["r2"], phase_error=out["phase_error"])
+
+
+def edge_fraction_from_phase(phase, edge_x, rows, eval_row, modulation=None, gap=30, span=180, step=5,
+                             half_width=2, deg_y=1, deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
+    """Fringe fraction at the edge column from a wrapped-phase map (phase stepping).
+
+    The same comparison as :func:`interflib.fringe.edge_comparison.edge_fraction`: platen
+    left of the edge and block right of it, column bands from ``gap`` to ``span`` px away
+    from the edge, each side extrapolated to ``edge_x`` with a polynomial of degree ``deg``
+    and the two phases subtracted there, so any phase term common to both surfaces cancels.
+    The band phases come from :func:`column_phases_from_map` instead of a sinusoidal fit.
+
+    Parameters
+    ----------
+    phase : numpy.ndarray
+        Wrapped phase map, radians (e.g. :attr:`PhaseStepResult.phase`).
+    edge_x : float
+        Edge column, px.
+    rows : tuple of int
+        Rows ``(y0, y1)`` that enter the fit along ``y``.
+    eval_row : float
+        Evaluation row; the fraction refers to it.
+    modulation : numpy.ndarray, optional
+        Modulation ``b`` used to weight the pixels of each band.
+    gap, span, step : int
+        Band positions: from ``gap`` to ``span`` px from the edge, every ``step`` px.
+    half_width : int
+        Half-width of each band, px.
+    deg_y, deg : int
+        Degree of the fit along ``y`` of each band and along ``x`` of each side.
+    r2_min : float
+        Bands with a smaller ``r2`` (see :func:`column_phases_from_map`) are left out.
+    order_sign : {1, -1}
+        ``+1`` when the demodulated phase increases with the interference order (each step
+        ``delta_k`` raises the order), ``-1`` otherwise; see
+        :func:`interflib.fringe.models.signed_fraction`.
+
+    Returns
+    -------
+    EdgeFractionResult
+    """
+    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    platen, block = [column_phases_from_map(phase, xs, rows, eval_row, modulation, half_width, deg_y)
+                     for xs in (xs_platen, xs_block)]
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)

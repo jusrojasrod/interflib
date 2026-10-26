@@ -155,3 +155,14 @@ def test_reversed_order_reads_one_minus_f_unless_declared(fraction):
     declared = edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD, order_sign=-1)
     assert _circular_gap(default.fraction, 1.0 - fraction) < 1e-3
     assert _circular_gap(declared.fraction, fraction) < 1e-3
+
+
+def test_fraction_error_matches_the_scatter_over_noise():
+    """The extrapolation uncertainty matches the scatter of F over noise realisations
+    (within the sampling error of 40 runs) and vanishes on a clean scene."""
+    assert edge_fraction(_scene(0.3), EDGE_X, ROWS, EVAL_ROW, PERIOD).fraction_error < 1e-9
+    runs = [edge_fraction(_scene(0.3, tilt_deg=2.0, noise=200.0, seed=s), EDGE_X, ROWS, EVAL_ROW, PERIOD)
+            for s in range(40)]
+    scatter = np.std([((r.fraction - 0.3) + 0.5) % 1.0 - 0.5 for r in runs], ddof=1)
+    reported = np.mean([r.fraction_error for r in runs])
+    assert 0.6 < reported / scatter < 1.5

@@ -4,6 +4,8 @@ import pytest
 
 from interflib.fringe.phase_shifting import (
     PhaseStepResult,
+    column_phases_from_map,
+    edge_fraction_from_phase,
     four_step,
     fraction_from_phase,
     hariharan_five_step,
@@ -271,3 +273,103 @@ def test_fraction_from_phase_with_reversed_phase_needs_order_sign():
     assert _fraction_gap(fraction_from_phase(phase, roi_platen, roi_block), 1 - fraction) < 1e-6
     assert _fraction_gap(fraction_from_phase(phase, roi_platen, roi_block, order_sign=-1),
                          fraction) < 1e-6
+
+
+# --------------------------------------------------------------------------------------
+# Fraction compared at the edge column (same comparison as edge_comparison)
+# --------------------------------------------------------------------------------------
+EDGE_X, EVAL_ROW, PERIOD = 220, 150, 25.0
+EDGE_ROWS = (EVAL_ROW - 75, EVAL_ROW + 75)
+
+
+def _edge_phase_map(fraction, tilt_deg=0.0, wedge_x=0.0, shape=(300, 480), noise=0.0, seed=0):
+    """Wrapped phase: platen left of EDGE_X, block from EDGE_X on, F exact at (EDGE_X, EVAL_ROW).
+
+    ``tilt_deg`` rotates the fringes of both surfaces (a common gradient ``g_x``);
+    ``wedge_x`` (fringes/px) is an extra gradient of the block only.
+    """
+    ny, nx = shape
+    y = np.arange(ny, dtype=float)[:, None] - EVAL_ROW
+    x = np.arange(nx, dtype=float)[None, :] - EDGE_X
+    f_y = 1.0 / PERIOD
+    order = f_y * y + f_y * np.tan(np.radians(tilt_deg)) * x
+    order = order + np.where(x >= 0, fraction + wedge_x * x, 0.0)
+    phase = 2 * np.pi * order
+    if noise:
+        phase = phase + np.random.default_rng(seed).normal(0.0, noise, phase.shape)
+    return np.angle(np.exp(1j * phase))
+
+
+@pytest.mark.parametrize("fraction", [0.05, 0.37, 0.81])
+@pytest.mark.parametrize("tilt_deg", [0.0, 3.0])
+def test_edge_fraction_from_phase_cancels_a_common_tilt(fraction, tilt_deg):
+    """Same-column comparison: exact under rotated fringes and a block wedge, where the
+    strip comparison is off by g_x times the strip separation."""
+    phase = _edge_phase_map(fraction, tilt_deg=tilt_deg, wedge_x=2e-4)
+    res = edge_fraction_from_phase(phase, EDGE_X, EDGE_ROWS, EVAL_ROW)
+    assert _fraction_gap(res.fraction, fraction) < 1e-9
+    assert res.fraction_error < 1e-9
+    assert res.slope_platen == pytest.approx(np.tan(np.radians(tilt_deg)) / PERIOD, abs=1e-12)
+
+    strips = fraction_from_phase(phase, (EDGE_ROWS[0], EDGE_ROWS[1], 60, 160),
+                                 (EDGE_ROWS[0], EDGE_ROWS[1], 280, 380))
+    if tilt_deg:
+        assert _fraction_gap(strips, fraction) > 0.1          # g_x * 220 px ~ 0.46 fringe
+
+
+def test_column_phases_from_map_use_the_sine_convention():
+    """The band phase is the phi of A sin(w y + phi): pi/2 above the cosine phase."""
+    phase = _edge_phase_map(0.0)
+    cols = column_phases_from_map(phase, [60, 100], EDGE_ROWS, EVAL_ROW)
+    np.testing.assert_allclose(cols.phase, np.pi / 2, atol=1e-12)
+    np.testing.assert_allclose(cols.period, PERIOD, rtol=1e-12)
+    np.testing.assert_allclose(cols.r2, 1.0, atol=1e-12)
+
+
+def test_edge_fraction_from_phase_with_reversed_order():
+    phase = -_edge_phase_map(0.37)
+    assert _fraction_gap(edge_fraction_from_phase(phase, EDGE_X, EDGE_ROWS, EVAL_ROW).fraction, 0.63) < 1e-9
+    res = edge_fraction_from_phase(phase, EDGE_X, EDGE_ROWS, EVAL_ROW, order_sign=-1)
+    assert _fraction_gap(res.fraction, 0.37) < 1e-9
+
+
+def test_edge_fraction_from_phase_uncertainty_matches_the_scatter():
+    """With independent pixel noise the reported extrapolation uncertainty matches the
+    scatter of F over noise realisations (within the sampling error of 40 runs)."""
+    runs = [edge_fraction_from_phase(_edge_phase_map(0.37, tilt_deg=2.0, noise=0.6, seed=s),
+                                     EDGE_X, EDGE_ROWS, EVAL_ROW) for s in range(40)]
+    scatter = np.std([((r.fraction - 0.37) + 0.5) % 1.0 - 0.5 for r in runs], ddof=1)
+    reported = np.mean([r.fraction_error for r in runs])
+    assert 0.6 < reported / scatter < 1.5
+
+
+def test_end_to_end_stack_edge_fraction_with_rotated_fringes():
+    """Simulator stack with fringes rotated across the field: the same-column reading
+    recovers the truth at the block edge."""
+    from interflib.simulation.interferogram import (
+        Illumination,
+        PhaseModel,
+        SceneGeometry,
+        SensorModel,
+        synthesize_interferogram,
+    )
+
+    geometry = SceneGeometry(resolution=(160, 220), fov_mm=25.0,
+                             block_width_mm=6.0, block_height_mm=10.0)
+    illumination = Illumination(psf_sigma_px=0.0, vignette=0.0, visibility=0.9)
+    sensor = SensorModel(shot_noise=False, read_noise_e=0.0, bit_depth=16, saturate=False)
+    frames, truth = [], None
+    for k in range(5):
+        model = PhaseModel(wavelength_nm=632.8, central_length_nm=7777.0, fringes_x=1.5,
+                           fringes_y=6.0, phase_shift_rad=k * np.pi / 2.0)
+        truth = synthesize_interferogram(geometry, model, illumination, sensor, seed=k)
+        frames.append(truth.irradiance)
+    recovered = hariharan_five_step(frames)
+
+    rows = np.where(truth.block_mask.any(axis=1))[0]
+    eval_row = int(rows.mean())
+    first = int(np.flatnonzero(truth.block_mask[eval_row])[0])
+    res = edge_fraction_from_phase(recovered.phase, first - 0.5, (rows[5], rows[-5]), eval_row,
+                                   modulation=recovered.modulation, gap=6, span=24, step=2,
+                                   half_width=1)
+    assert _fraction_gap(res.fraction, truth.fraction_truth) < 1e-3

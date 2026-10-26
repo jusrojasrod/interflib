@@ -85,6 +85,13 @@ class EdgeFractionResult:
     ----------
     fraction : float
         ``F`` in ``[0, 1)`` at the edge column and evaluation row.
+    fraction_error : float
+        Standard uncertainty of ``fraction`` from the extrapolation to the edge, fringes:
+        the two side polynomials evaluated at ``edge_x``, each with the covariance given
+        by the scatter of its band phases, combined in quadrature. It assumes independent
+        band phases, so it falls short when the demodulation correlates neighbouring
+        bands (the two-dimensional Fourier filter), and it does not include a model error
+        of the polynomial (for instance curvature with ``deg=1``).
     phase_platen, phase_block : float
         Extrapolated phases at the edge, radians (unwrapped, so only their difference
         modulo ``2 pi`` is meaningful).
@@ -102,6 +109,7 @@ class EdgeFractionResult:
     """
 
     fraction: float
+    fraction_error: float
     phase_platen: float
     phase_block: float
     slope_platen: float
@@ -266,11 +274,33 @@ def side_fit(cols: ColumnPhases, x_range, deg=1, r2_min=0.3) -> np.ndarray:
     numpy.ndarray
         Polynomial coefficients, highest power first (as ``numpy.polyfit``).
     """
+    x, phase = _side_points(cols, x_range, deg, r2_min)
+    return np.polyfit(x, phase, deg)
+
+
+def _side_points(cols: ColumnPhases, x_range, deg, r2_min):
+    # Valid bands of one side: inside x_range, converged, and above the r2 threshold.
     lo, hi = x_range
     sel = ((cols.x >= lo) & (cols.x <= hi) & (cols.r2 >= r2_min) & np.isfinite(cols.phase_unwrapped))
     if sel.sum() <= deg + 1:
         raise ValueError("too few valid column bands in %s" % (x_range,))
-    return np.polyfit(cols.x[sel], cols.phase_unwrapped[sel], deg)
+    return cols.x[sel].astype(float), cols.phase_unwrapped[sel]
+
+
+def _value_error(cols: ColumnPhases, x_range, deg, r2_min, at) -> float:
+    """Standard uncertainty (radians) of the side polynomial evaluated at ``at``.
+
+    The fit is repeated in ``x - at``, so the value at ``at`` is the constant term and
+    its variance the last diagonal entry of the covariance, scaled by the residual
+    variance of the band phases (at least one degree of freedom is left by
+    :func:`_side_points`).
+    """
+    x, phase = _side_points(cols, x_range, deg, r2_min)
+    design = np.vander(x - at, deg + 1)
+    coef, *_ = np.linalg.lstsq(design, phase, rcond=None)
+    resid = phase - design @ coef
+    cov = np.linalg.inv(design.T @ design) * (resid @ resid / (len(x) - (deg + 1)))
+    return float(np.sqrt(cov[-1, -1]))
 
 
 def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, step=5,
@@ -359,11 +389,13 @@ def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
     -------
     EdgeFractionResult
     """
-    cp = side_fit(platen, (edge_x - span, edge_x - gap), deg, r2_min)
-    cb = side_fit(block, (edge_x + gap, edge_x + span), deg, r2_min)
+    sides = (platen, (edge_x - span, edge_x - gap)), (block, (edge_x + gap, edge_x + span))
+    cp, cb = [side_fit(cols, x_range, deg, r2_min) for cols, x_range in sides]
     phi_p, phi_b = np.polyval(cp, edge_x), np.polyval(cb, edge_x)
     dp, db = np.polyval(np.polyder(cp), edge_x), np.polyval(np.polyder(cb), edge_x)
+    u_p, u_b = [_value_error(cols, x_range, deg, r2_min, edge_x) for cols, x_range in sides]
     return EdgeFractionResult(fraction=signed_fraction(phi_b - phi_p, order_sign),
+                              fraction_error=float(np.hypot(u_p, u_b) / (2 * np.pi)),
                               phase_platen=float(phi_p), phase_block=float(phi_b),
                               slope_platen=float(dp / (2 * np.pi)), slope_block=float(db / (2 * np.pi)),
                               edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block,

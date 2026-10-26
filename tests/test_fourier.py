@@ -302,3 +302,17 @@ def test_reversed_order_reads_one_minus_f_unless_declared(method, fraction):
     assert _circular_gap(default.fraction, 1.0 - fraction) < 1e-4
     assert _circular_gap(declared.fraction, fraction) < 1e-4
     assert declared.order_sign == -1
+
+
+def test_fraction_error_of_the_column_variant_matches_the_scatter():
+    runs = [fourier_edge_fraction(_scene(0.3, tilt_deg=2.0, noise=200.0, seed=s), EDGE_X, ROWS, EVAL_ROW,
+                                  fft_rows=FFT_ROWS) for s in range(40)]
+    scatter = np.std([((r.fraction - 0.3) + 0.5) % 1.0 - 0.5 for r in runs], ddof=1)
+    reported = np.mean([r.fraction_error for r in runs])
+    assert 0.6 < reported / scatter < 1.5
+
+
+def test_fraction_error_of_the_2d_variant_is_not_reported():
+    """The 2-D filter correlates the bands, so the residual scatter would understate u(F)."""
+    res = fourier_edge_fraction_2d(_scene(0.3, noise=200.0), EDGE_X, ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    assert np.isnan(res.fraction_error)

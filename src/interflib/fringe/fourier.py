@@ -42,7 +42,7 @@ with ``order_sign`` (``+1``: order increasing towards ``+y``), as in that module
 
 This module has no I/O side effects: it takes and returns arrays.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy.signal.windows import tukey
@@ -682,6 +682,10 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     Returns
     -------
     EdgeFractionResult
+        With ``fraction_error`` set to NaN: the two-dimensional filter correlates
+        neighbouring bands along ``x``, the side fits absorb that correlated error and the
+        residual scatter underestimates it (by about a factor of ten in synthetic tests).
+        Use repeated frames or :func:`interflib.fringe.diagnostics.bandwidth_sensitivity`.
     """
     fft_rows = rows if fft_rows is None else fft_rows
     if not (fft_rows[0] <= rows[0] and rows[1] <= fft_rows[1]):
@@ -699,4 +703,5 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     maps = [demodulate_2d(img, fft_rows, c, carrier, bandwidth, taper, min_cycles) for c in (cols_platen, cols_block)]
     platen, block = [map_column_phases(m, img, xs, rows, eval_row, half_width, deg_y, bandwidth)
                      for m, xs in zip(maps, (xs_platen, xs_block))]
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    result = fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    return replace(result, fraction_error=float("nan"))
