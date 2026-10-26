@@ -31,6 +31,7 @@ the edge (boxes). Every figure in this README is made with `tools/make_readme_fi
   - [Phase stepping](#phase-stepping)
   - [Sign of the fraction](#sign-of-the-fraction)
 - [From the fraction to the length](#from-the-fraction-to-the-length)
+- [End-to-end measurement](#end-to-end-measurement)
 - [Conventions](#conventions)
 - [Package layout and status](#package-layout-and-status)
 - [Development](#development)
@@ -277,6 +278,45 @@ classic = GaugeBlockLength(wavelength=543.5, nominal_length=2e6, cte=11.5e-6, te
 # deviation from nominal, nm
 print(f"{classic.length_dev:.1f}")                  # -> 51.0
 ```
+
+## End-to-end measurement
+
+`tools/run_calibration.py` runs the whole chain on one block and prints a summary:
+
+- the inputs, each with its origin (sidecar, command line, assumption);
+- the air correction;
+- the image: edge, period, visibility, saturation and wedge;
+- the fraction from the three single-shot readers, with their spread, the repeatability over the frames, and the
+  value at the face centre;
+- the integer order, from the nominal and, given a prior, by MEFM;
+- the length at 20 °C;
+- the warnings that apply.
+
+Without arguments it measures a simulated 2 mm block and also reports the error against the truth. `--series` reads
+a real burst and its `.meta.yaml` sidecar; this needs the `tools` extra (pyyaml). A value missing from the sidecar,
+such as the pressure, has to be given on the command line: the script stops rather than assume it. `--json` writes
+the same summary to a file.
+
+```bash
+python tools/run_calibration.py                                   # simulated block
+python tools/run_calibration.py --series DATA/20261005_L1_tg-inm_2mm_repet-2_serie-010     --pressure 75300 --face-centre-x 1340.5 --pixel-mm 0.0179 --json summary.json
+```
+
+```
+Length at 20 C : 2.0000510 mm   (d = +51.0 nm from nominal; F contribution u = 0.02 nm)
+...
+Fringe fraction (order_sign +1; primary: fourier)
+    sine       F = 0.1637   u_e(F) = 0.0000
+  * fourier    F = 0.1636   u_e(F) = 0.0000
+    fourier2d  F = 0.1636   u_e(F) = nan
+  spread between methods 0.0001 fringe (0.0 nm)
+  repeatability (5 frames) s = 0.0001, s/sqrt(n) = 0.0000 fringe
+...
+Truth          F = 0.1636, L = 2.0000510 mm;   error F -0.0000, L -0.00 nm
+```
+
+The contribution `u(F)·λ/2` covers only the reading of the fraction. It is not the calibration uncertainty, which
+also includes the air, the temperatures, the wavelength, the phase change and the wringing film.
 
 ## Conventions
 
