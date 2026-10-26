@@ -25,6 +25,12 @@ Image columns are ``x`` and rows ``y``; fringes are expected to be roughly horiz
 (spatial carrier along ``y``). The platen is assumed to lie left of the edge and the
 block right of it; mirror the image for the opposite layout.
 
+Sign convention: every band phase is taken on the branch whose phase increases towards
+``+y`` (down the image). The fraction is ``F`` when the interference order also increases
+towards ``+y`` (``order_sign=+1``, the default) and ``1 - F`` otherwise, so the set-up's
+direction must be declared with ``order_sign=-1`` when it runs the other way; see
+:func:`interflib.fringe.models.signed_fraction`.
+
 The sinusoidal model and the linear least-squares seed (a regional synchronous
 detection at one frequency) follow Servin, Quiroga & Padilla, *Fringe Pattern Analysis
 for Optical Metrology*, Wiley-VCH, 2014, ch. 2. Extrapolating the platen phase to the
@@ -39,7 +45,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import curve_fit
 
-from .models import fit_quality, interference_model
+from .models import canonical_sinusoid, fit_quality, interference_model, signed_fraction
 
 
 @dataclass
@@ -90,6 +96,9 @@ class EdgeFractionResult:
         Evaluation row used, px.
     platen, block : ColumnPhases
         The band phases of each side, for diagnostics.
+    order_sign : int
+        Direction of the interference order used for ``fraction`` (``+1``: increasing
+        towards ``+y``).
     """
 
     fraction: float
@@ -101,6 +110,7 @@ class EdgeFractionResult:
     eval_row: float
     platen: ColumnPhases
     block: ColumnPhases
+    order_sign: int = 1
 
 
 def detect_edge_column(img, rows=(600, 1600), search=(1000, 1300), smooth=5) -> int:
@@ -192,8 +202,9 @@ def fit_column_band(profile, y, period_guess):
     -------
     tuple
         ``(phi, period, r2, phase_error)`` with ``phi`` in ``[0, 2 pi)``; NaNs if the
-        fit does not converge. A negative fitted amplitude is folded into the phase so
-        that every band lies on the same branch.
+        fit does not converge. The fit is folded onto ``A >= 0``, ``w > 0``
+        (:func:`interflib.fringe.models.canonical_sinusoid`) so that every band lies on
+        the same branch, with the phase increasing towards ``+y``.
     """
     profile = np.asarray(profile, dtype=float)
     try:
@@ -201,10 +212,8 @@ def fit_column_band(profile, y, period_guess):
                                 p0=_linear_seed(profile, y, 2 * np.pi / period_guess), maxfev=5000)
     except RuntimeError:
         return np.nan, np.nan, np.nan, np.nan
-    amplitude, w, phi, _ = params
-    if amplitude < 0:
-        phi += np.pi
     quality = fit_quality(y, profile, params, cov)
+    _, w, phi = canonical_sinusoid(*params[:3])
     return float(phi % (2 * np.pi)), float(2 * np.pi / w), quality.r2, quality.phase_error
 
 
@@ -265,7 +274,7 @@ def side_fit(cols: ColumnPhases, x_range, deg=1, r2_min=0.3) -> np.ndarray:
 
 
 def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, step=5,
-                  half_width=2, deg=1, r2_min=0.3) -> EdgeFractionResult:
+                  half_width=2, deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
     """Fringe fraction with block and platen phases compared at the edge column.
 
     The platen is taken left of the edge and the block right of it. Each side uses
@@ -294,6 +303,9 @@ def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, s
         Degree of the polynomial fitted on each side.
     r2_min : float
         Bands with a smaller coefficient of determination are left out of the fits.
+    order_sign : {1, -1}
+        ``+1`` when the interference order increases towards ``+y``, ``-1`` when it
+        decreases (the fraction is then ``1 - F`` of the ``+1`` reading).
 
     Returns
     -------
@@ -302,7 +314,7 @@ def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, s
     xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
     platen = column_phases(img, xs_platen, rows, eval_row, period_guess, half_width)
     block = column_phases(img, xs_block, rows, eval_row, period_guess, half_width)
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
 
 
 def side_band_centres(edge_x, gap, span, step):
@@ -319,7 +331,7 @@ def side_band_centres(edge_x, gap, span, step):
 
 
 def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row, gap=30, span=180,
-                     deg=1, r2_min=0.3) -> EdgeFractionResult:
+                     deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
     """Extrapolate the column phases of each side to the edge and take their difference.
 
     This is the comparison step of :func:`edge_fraction`, independent of how the column
@@ -340,6 +352,8 @@ def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
         Degree of the polynomial fitted on each side.
     r2_min : float
         Bands with a smaller coefficient of determination are left out of the fits.
+    order_sign : {1, -1}
+        Direction of the interference order along ``y``, as in :func:`edge_fraction`.
 
     Returns
     -------
@@ -349,7 +363,8 @@ def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
     cb = side_fit(block, (edge_x + gap, edge_x + span), deg, r2_min)
     phi_p, phi_b = np.polyval(cp, edge_x), np.polyval(cb, edge_x)
     dp, db = np.polyval(np.polyder(cp), edge_x), np.polyval(np.polyder(cb), edge_x)
-    return EdgeFractionResult(fraction=float(((phi_b - phi_p) / (2 * np.pi)) % 1),
+    return EdgeFractionResult(fraction=signed_fraction(phi_b - phi_p, order_sign),
                               phase_platen=float(phi_p), phase_block=float(phi_b),
                               slope_platen=float(dp / (2 * np.pi)), slope_block=float(db / (2 * np.pi)),
-                              edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block)
+                              edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block,
+                              order_sign=order_sign)

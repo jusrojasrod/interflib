@@ -19,7 +19,8 @@ PERIOD = 30.0               # px per fringe along y (about 20 fringes in the win
 ROWS = (EVAL_ROW - 75, EVAL_ROW + 75)
 
 
-def _scene(fraction, tilt_deg=0.0, wedge_x=0.0, wedge_y=0.0, dark_edge=True, noise=0.0, seed=0):
+def _scene(fraction, tilt_deg=0.0, wedge_x=0.0, wedge_y=0.0, dark_edge=True, noise=0.0, seed=0,
+           period=PERIOD):
     """Platen and block fringes with a known fraction at (EDGE_X, EVAL_ROW).
 
     ``tilt_deg`` rotates the fringes of both surfaces alike (a reference-mirror tilt);
@@ -30,7 +31,7 @@ def _scene(fraction, tilt_deg=0.0, wedge_x=0.0, wedge_y=0.0, dark_edge=True, noi
     ny, nx = SHAPE
     y = np.arange(ny, dtype=float)[:, None] - EVAL_ROW
     x = np.arange(nx, dtype=float)[None, :] - EDGE_X
-    f_y = 1.0 / PERIOD
+    f_y = 1.0 / period
     g_x = f_y * np.tan(np.radians(tilt_deg))
     phase_platen = 2 * np.pi * (f_y * y + g_x * x) + 0.7
     phase_block = 2 * np.pi * ((f_y + wedge_y) * y + (g_x + wedge_x) * x + fraction) + 0.7
@@ -144,3 +145,13 @@ def test_height_change_needs_the_scale():
     m = measure_wedge(_scene(0.3), EDGE_X, ROWS, EVAL_ROW, PERIOD)
     with pytest.raises(ValueError):
         m.height_change_nm(9.0)
+
+
+@pytest.mark.parametrize("fraction", [0.05, 0.3, 0.62])
+def test_reversed_order_reads_one_minus_f_unless_declared(fraction):
+    """Order decreasing towards +y: the default reads 1 - F, order_sign=-1 gives F."""
+    img = _scene(fraction, period=-PERIOD)
+    default = edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD)
+    declared = edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD, order_sign=-1)
+    assert _circular_gap(default.fraction, 1.0 - fraction) < 1e-3
+    assert _circular_gap(declared.fraction, fraction) < 1e-3

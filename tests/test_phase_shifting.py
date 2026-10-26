@@ -258,3 +258,16 @@ def test_end_to_end_stack_recovers_ground_truth_fraction():
 
     fraction = fraction_from_phase(recovered.phase, roi_platen, roi_block)
     assert _fraction_gap(fraction, result_truth.fraction_truth) < 0.01
+
+
+def test_fraction_from_phase_with_reversed_phase_needs_order_sign():
+    """Steps run against the order: the PSI phase is negated, the default reads 1 - F."""
+    ny, nx, fraction = 120, 160, 0.37
+    y = np.linspace(-1.0, 1.0, ny)[:, None]
+    unwrapped = 2.0 * np.pi * 5.0 * y * np.ones((1, nx))
+    unwrapped[:, 90:130] += 2.0 * np.pi * fraction
+    phase = np.angle(np.exp(-1j * unwrapped))
+    roi_platen, roi_block = (0, ny, 10, 50), (0, ny, 95, 125)
+    assert _fraction_gap(fraction_from_phase(phase, roi_platen, roi_block), 1 - fraction) < 1e-6
+    assert _fraction_gap(fraction_from_phase(phase, roi_platen, roi_block, order_sign=-1),
+                         fraction) < 1e-6

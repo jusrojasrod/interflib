@@ -39,6 +39,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .models import signed_fraction
+
 
 @dataclass
 class PhaseStepResult:
@@ -212,7 +214,7 @@ def _circular_mean(values, axis=None):
     return np.angle(np.mean(np.exp(1j * np.asarray(values, dtype=float)), axis=axis))
 
 
-def fraction_from_phase(phase, roi_platen, roi_block) -> float:
+def fraction_from_phase(phase, roi_platen, roi_block, order_sign=1) -> float:
     """Fringe fraction between a gauge block and its platen from a wrapped-phase map.
 
     The demodulated phase carries the common reference tilt plus, over the block, the extra
@@ -230,6 +232,11 @@ def fraction_from_phase(phase, roi_platen, roi_block) -> float:
         Regions of interest ``(y1, y2, x1, x2)`` over the reference platen and the block.
         Both must span the same rows; the reference tilt is assumed to run along the rows
         (the fringe direction), matching the ``profile_fit`` convention.
+    order_sign : {1, -1}
+        ``+1`` when the demodulated phase increases with the interference order, ``-1``
+        when it decreases (the fraction is then ``1 - F`` of the ``+1`` reading). With
+        phase stepping this is set by the direction of the steps relative to the order,
+        not by the reference tilt; see :func:`interflib.fringe.models.signed_fraction`.
 
     Returns
     -------
@@ -255,5 +262,4 @@ def fraction_from_phase(phase, roi_platen, roi_block) -> float:
     platen_line = _circular_mean(platen, axis=1)          # per-row phase over the platen
     block_line = _circular_mean(block, axis=1)            # per-row phase over the block
     per_row_diff = block_line - platen_line               # tilt cancels row by row
-    fraction = _circular_mean(per_row_diff) / (2.0 * np.pi)
-    return float(fraction % 1.0)
+    return signed_fraction(_circular_mean(per_row_diff), order_sign)

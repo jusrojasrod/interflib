@@ -10,6 +10,36 @@ def interference_model(x, A, w, phi, C):
     return A * np.sin(w * x + phi) + C
 
 
+def canonical_sinusoid(A, w, phi):
+    """Fold ``A*sin(w*x + phi)`` onto the branch ``A >= 0``, ``w > 0``; returns ``(A, w, phi)``.
+
+    The model is invariant under ``(A, phi) -> (-A, phi + pi)`` and under
+    ``(w, phi) -> (-w, pi - phi)``, so independent fits can land on different branches.
+    A ``pi`` between two fits adds half a fringe to their phase difference, and on the
+    ``w < 0`` branch the phase runs backwards along ``x``, turning ``F`` into ``1 - F``.
+    On the canonical branch the phase always increases along ``+x``.
+    """
+    if w < 0:
+        w, phi = -w, np.pi - phi
+    if A < 0:
+        A, phi = -A, phi + np.pi
+    return A, w, phi
+
+
+def signed_fraction(phase_difference, order_sign=1) -> float:
+    """Fringe fraction in ``[0, 1)`` from a block-minus-platen phase difference, radians.
+
+    ``order_sign`` relates the measured phase to the interference order, counted so that
+    the block face, ``L`` above the platen, lies ``2 L / lambda`` orders above it: ``+1``
+    when the phase increases with the order, ``-1`` when it decreases. With the wrong sign
+    the fraction comes out as ``1 - F``. An intensity image cannot tell the two apart (the
+    cosine is even), so the sign is a property of the set-up, determined on the bench.
+    """
+    if order_sign not in (1, -1):
+        raise ValueError("order_sign must be +1 or -1, got %r" % (order_sign,))
+    return float((order_sign * phase_difference / (2 * np.pi)) % 1.0)
+
+
 @dataclass
 class FitQuality:
     """Goodness-of-fit metrics for a sinusoidal fringe-profile fit."""

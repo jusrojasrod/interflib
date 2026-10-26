@@ -177,3 +177,22 @@ def test_fraction_truth_is_the_step_at_the_block_centre(centre_mm):
     step = (sim.opd_nm[row, col] - ref.opd_nm[row, col]) / lam
     gap = (step - sim.fraction_truth + 0.5) % 1.0 - 0.5
     assert abs(gap) < 1e-9
+
+
+def test_reversed_reference_tilt_reads_one_minus_f_unless_declared():
+    """The order direction is not observable in one image: with the reference tilted the
+    other way (order decreasing towards +y) the default reading is 1 - F, and declaring
+    order_sign=-1 recovers F."""
+    lam = 632.8
+    geometry, phase, illumination, sensor = _clean_recovery_scene(79.1, lam)   # F = 0.25
+    phase.fringes_y = -8.0
+    result = synthesize_interferogram(geometry, phase, illumination, sensor, seed=0)
+    roi_platen, roi_block = (60, 452, 40, 130), (60, 452, 220, 300)
+
+    default = FringeFractionMeasurement(result.image, roi_platen, roi_block)
+    declared = FringeFractionMeasurement(result.image, roi_platen, roi_block, order_sign=-1)
+    f_default = default.measure(pixels_between_fringes=512 / 8).fringe_fraction
+    f_declared = declared.measure(pixels_between_fringes=512 / 8).fringe_fraction
+
+    assert f_default == pytest.approx(1.0 - result.fraction_truth, abs=0.03)
+    assert f_declared == pytest.approx(result.fraction_truth, abs=0.03)

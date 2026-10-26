@@ -35,7 +35,10 @@ The phase is returned in the convention of :mod:`interflib.fringe.edge_compariso
 (the phase ``phi`` of ``A sin(w y + phi) + C`` with ``w > 0``), so the column phases of
 the two methods are directly comparable and the edge comparison is shared: the column
 phases are extrapolated to the edge and subtracted there by
-:func:`interflib.fringe.edge_comparison.fraction_at_edge`.
+:func:`interflib.fringe.edge_comparison.fraction_at_edge`. The filter keeps the side lobe
+at ``+g_y``, so the phase increases towards ``+y`` whichever way the reference is tilted:
+the direction of the interference order is not observable in one image and is declared
+with ``order_sign`` (``+1``: order increasing towards ``+y``), as in that module.
 
 This module has no I/O side effects: it takes and returns arrays.
 """
@@ -269,7 +272,7 @@ def _phases_at_row(band_phase, background, modulation, profiles, y, eval_row, de
 
 def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=None, bandwidth=0.5,
                           gap=30, span=180, step=5, half_width=2, deg_y=1, deg=1, r2_min=0.3,
-                          taper=0.0, min_cycles=4.0) -> EdgeFractionResult:
+                          taper=0.0, min_cycles=4.0, order_sign=1) -> EdgeFractionResult:
     """Fringe fraction at the edge column with Fourier-demodulated column phases.
 
     The same comparison as :func:`interflib.fringe.edge_comparison.edge_fraction` (platen
@@ -300,6 +303,9 @@ def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=No
         Degree of the fit along ``x`` of each side.
     r2_min : float
         Bands with a smaller coefficient of determination are left out of the side fits.
+    order_sign : {1, -1}
+        ``+1`` when the interference order increases towards ``+y``, ``-1`` when it
+        decreases (the fraction is then ``1 - F`` of the ``+1`` reading).
 
     Returns
     -------
@@ -313,7 +319,7 @@ def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=No
                   deg=deg_y, taper=taper, min_cycles=min_cycles)
     platen = fourier_column_phases(img, xs_platen, rows, eval_row, **kwargs)
     block = fourier_column_phases(img, xs_block, rows, eval_row, **kwargs)
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
 
 
 # --------------------------------------------------------------------------------------
@@ -636,7 +642,7 @@ def map_column_phases(phase_map: PhaseMap, img, x_centres, rows, eval_row, half_
 
 def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier=None, bandwidth=0.5,
                              gap=30, span=180, step=5, half_width=2, deg_y=1, deg=1, r2_min=0.3,
-                             taper=0.0, min_cycles=4.0, inner=12, outer=20) -> EdgeFractionResult:
+                             taper=0.0, min_cycles=4.0, inner=12, outer=20, order_sign=1) -> EdgeFractionResult:
     """Fringe fraction at the edge column with two-dimensional Fourier demodulation.
 
     A platen region left of the edge and a block region right of it are demodulated
@@ -667,7 +673,7 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
         Rows of the two regions; ``rows`` if omitted.
     carrier, bandwidth, taper, min_cycles
         Passed to :func:`demodulate_2d`.
-    gap, span, step, half_width, deg_y, deg, r2_min
+    gap, span, step, half_width, deg_y, deg, r2_min, order_sign
         As in :func:`fourier_edge_fraction`.
     inner, outer : int
         Region margins: each region runs from ``inner`` px off the edge to ``span + outer``
@@ -693,4 +699,4 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     maps = [demodulate_2d(img, fft_rows, c, carrier, bandwidth, taper, min_cycles) for c in (cols_platen, cols_block)]
     platen, block = [map_column_phases(m, img, xs, rows, eval_row, half_width, deg_y, bandwidth)
                      for m, xs in zip(maps, (xs_platen, xs_block))]
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min)
+    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)

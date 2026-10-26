@@ -4,13 +4,19 @@ Two regions of interest (the reference platen and the gauge block) are averaged 
 1-D intensity profiles, and each is fitted with a sinusoidal interference model. The
 fractional fringe order is the phase difference between the block and the platen,
 divided by ``2*pi``.
+
+The profiles run along the rows (``y``) and each fit is taken on the branch whose phase
+increases towards ``+y``. The fraction is ``F`` when the interference order also increases
+towards ``+y`` (``order_sign=+1``, the default) and ``1 - F`` otherwise; see
+:func:`interflib.fringe.models.signed_fraction`.
 """
 from dataclasses import dataclass
 
 import numpy as np
 from scipy.optimize import curve_fit
 
-from interflib.fringe.models import FitQuality, fit_quality, interference_model
+from interflib.fringe.models import (FitQuality, canonical_sinusoid, fit_quality,
+                                     interference_model, signed_fraction)
 
 
 @dataclass
@@ -27,7 +33,8 @@ class FringeFractionResult:
 class FringeFractionMeasurement:
     """Measure the fringe fraction between a gauge block and its reference platen."""
 
-    def __init__(self, image: np.ndarray, roi_platen: tuple, roi_block: tuple):
+    def __init__(self, image: np.ndarray, roi_platen: tuple, roi_block: tuple,
+                 order_sign: int = 1):
         """
         Parameters
         ----------
@@ -36,8 +43,12 @@ class FringeFractionMeasurement:
         roi_platen, roi_block : tuple
             Regions of interest ``(y1, y2, x1, x2)`` over the reference platen and the
             gauge block.
+        order_sign : {1, -1}
+            ``+1`` when the interference order increases towards ``+y``, ``-1`` when it
+            decreases (the fraction is then ``1 - F`` of the ``+1`` reading).
         """
         self.image = image
+        self.order_sign = order_sign
         yp1, yp2, xp1, xp2 = roi_platen
         yb1, yb2, xb1, xb2 = roi_block
         self.platen_region = image[yp1:yp2, xp1:xp2]
@@ -84,19 +95,18 @@ class FringeFractionMeasurement:
         return [float(np.hypot(a, b)), float(frequency), float(np.arctan2(b, a)), float(c)]
 
     @staticmethod
-    def _canonicalize_amplitude(params: np.ndarray) -> np.ndarray:
-        """Force the fitted amplitude ``A >= 0``, absorbing its sign into the phase.
+    def _canonicalize(params: np.ndarray) -> np.ndarray:
+        """Fold the fitted ``(A, w, phi, C)`` onto ``A >= 0``, ``w > 0``.
 
         The model ``A*sin(w*x + phi) + C`` is invariant under
-        ``(A, phi) -> (-A, phi + pi)``, so independently fitting two profiles can land
-        them on opposite sign branches and inject a spurious ``pi`` (half a fringe)
-        into their phase difference. Canonicalizing every fit to ``A >= 0`` puts both
-        profiles on the same branch before the fraction is computed.
+        ``(A, phi) -> (-A, phi + pi)`` and ``(w, phi) -> (-w, pi - phi)``, so two
+        independent fits can land on different branches: a spurious ``pi`` (half a
+        fringe) in their difference, or a phase running backwards (``1 - F``). Folding
+        both fits onto one branch (:func:`interflib.fringe.models.canonical_sinusoid`)
+        removes both before the fraction is computed.
         """
-        A, w, phi, C = params
-        if A < 0:
-            A, phi = -A, phi + np.pi
-        return np.array([A, w, phi, C])
+        A, w, phi = canonical_sinusoid(*params[:3])
+        return np.array([A, w, phi, params[3]])
 
     def fit(self, pixels_between_fringes: float = 175.0, max_iterations: int = 5000):
         """Fit both profiles and store the fit quality.
@@ -115,7 +125,7 @@ class FringeFractionMeasurement:
             interference_model, self.pixel_indices, self.platen_profile,
             p0=p0_platen, maxfev=max_iterations,
         )
-        self.platen_params = self._canonicalize_amplitude(self.platen_params)
+        self.platen_params = self._canonicalize(self.platen_params)
         self.platen_quality = fit_quality(self.pixel_indices, self.platen_profile,
                                           self.platen_params, cov_platen)
 
@@ -126,20 +136,19 @@ class FringeFractionMeasurement:
             interference_model, self.pixel_indices, self.block_profile,
             p0=p0_block, maxfev=max_iterations,
         )
-        self.block_params = self._canonicalize_amplitude(self.block_params)
+        self.block_params = self._canonicalize(self.block_params)
         self.block_quality = fit_quality(self.pixel_indices, self.block_profile,
                                          self.block_params, cov_block)
         return self
 
     def calculate_fraction(self) -> float:
-        """Fringe fraction ``= (block_phase - platen_phase) / (2*pi)``, in ``[0, 1)``."""
+        """Fringe fraction ``= order_sign * (block_phase - platen_phase) / (2*pi)``, in ``[0, 1)``."""
         if self.platen_params is None or self.block_params is None:
             raise ValueError("Call fit() before calculate_fraction().")
 
         self.platen_phase = self.platen_params[2] % (2 * np.pi)
         self.block_phase = self.block_params[2] % (2 * np.pi)
-        phase_difference = (self.block_phase - self.platen_phase) % (2 * np.pi)
-        self.fringe_fraction = phase_difference / (2 * np.pi)
+        self.fringe_fraction = signed_fraction(self.block_phase - self.platen_phase, self.order_sign)
         return self.fringe_fraction
 
     def measure(self, pixels_between_fringes: float = 175.0,

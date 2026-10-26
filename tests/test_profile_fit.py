@@ -71,7 +71,7 @@ def test_real_wedge_profile_seeded_in_quadrature_converges():
     assert abs(2 * np.pi / m.block_params[1] - 36.4) < 0.4
 
 
-def test_canonicalize_amplitude_flips_sign_and_preserves_curve():
+def test_canonicalize_flips_sign_and_preserves_curve():
     """A negative amplitude is flipped to positive, absorbing the sign as a pi shift.
 
     Guards the fix for the half-fringe (pi) ambiguity: the returned curve must be
@@ -79,7 +79,7 @@ def test_canonicalize_amplitude_flips_sign_and_preserves_curve():
     """
     x = np.arange(0, 200)
     negative = np.array([-5.0, 0.05, 0.4, 12.0])  # A < 0
-    canonical = FringeFractionMeasurement._canonicalize_amplitude(negative)
+    canonical = FringeFractionMeasurement._canonicalize(negative)
 
     assert canonical[0] > 0
     np.testing.assert_allclose(
@@ -87,8 +87,32 @@ def test_canonicalize_amplitude_flips_sign_and_preserves_curve():
     )
 
 
-def test_canonicalize_amplitude_leaves_positive_amplitude_untouched():
+def test_canonicalize_leaves_positive_amplitude_untouched():
     positive = np.array([5.0, 0.05, 0.4, 12.0])  # A > 0
     np.testing.assert_allclose(
-        FringeFractionMeasurement._canonicalize_amplitude(positive), positive
+        FringeFractionMeasurement._canonicalize(positive), positive
     )
+
+
+def test_canonicalize_folds_a_negative_frequency_and_preserves_curve():
+    """On the w < 0 branch the phase runs backwards (F -> 1 - F); folding onto w > 0
+    must leave the curve unchanged."""
+    x = np.arange(0, 200)
+    for params in ([5.0, -0.05, 0.4, 12.0], [-5.0, -0.05, 0.4, 12.0]):
+        params = np.array(params)
+        canonical = FringeFractionMeasurement._canonicalize(params)
+        assert canonical[0] > 0 and canonical[1] > 0
+        np.testing.assert_allclose(
+            interference_model(x, *params), interference_model(x, *canonical), atol=1e-9
+        )
+
+
+def test_signed_fraction_reverses_the_order_and_validates_the_sign():
+    import pytest
+    from interflib.fringe.models import signed_fraction
+
+    assert signed_fraction(2 * np.pi * 0.3) == pytest.approx(0.3)
+    assert signed_fraction(2 * np.pi * 0.3, order_sign=-1) == pytest.approx(0.7)
+    assert signed_fraction(2 * np.pi * 1.3) == pytest.approx(0.3)
+    with pytest.raises(ValueError, match="order_sign"):
+        signed_fraction(1.0, order_sign=0)

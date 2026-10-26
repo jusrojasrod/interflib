@@ -289,3 +289,16 @@ def test_unwrap_mask_and_modulation_threshold():
         unwrap_phase_map(m, method="lsq")
     with pytest.raises(ValueError):
         unwrap_phase_map(m, mask=np.ones((10, 10), dtype=bool))
+
+
+@pytest.mark.parametrize("method", [fourier_edge_fraction, fourier_edge_fraction_2d])
+@pytest.mark.parametrize("fraction", [0.05, 0.3, 0.62])
+def test_reversed_order_reads_one_minus_f_unless_declared(method, fraction):
+    """With the order decreasing towards +y (reference tilted the other way) the image is
+    the same kind of fringe pattern; the default reads 1 - F and order_sign=-1 gives F."""
+    img = _scene(fraction, period=-PERIOD)
+    default = method(img, EDGE_X, ROWS, EVAL_ROW, fft_rows=FFT_ROWS)
+    declared = method(img, EDGE_X, ROWS, EVAL_ROW, fft_rows=FFT_ROWS, order_sign=-1)
+    assert _circular_gap(default.fraction, 1.0 - fraction) < 1e-4
+    assert _circular_gap(declared.fraction, fraction) < 1e-4
+    assert declared.order_sign == -1
