@@ -89,7 +89,7 @@ def test_end_to_end_fraction_is_recovered_by_profile_fit():
     roi_platen = (60, 452, 40, 130)
     roi_block = (60, 452, 220, 300)
     measurement = FringeFractionMeasurement(result.image, roi_platen, roi_block)
-    measured = measurement.measure(pixels_between_fringes=512 / 8).fringe_fraction
+    measured = measurement.measure(period_guess=512 / 8).fringe_fraction
 
     assert measured == pytest.approx(result.fraction_truth, abs=0.03)
 
@@ -191,8 +191,8 @@ def test_reversed_reference_tilt_reads_one_minus_f_unless_declared():
 
     default = FringeFractionMeasurement(result.image, roi_platen, roi_block)
     declared = FringeFractionMeasurement(result.image, roi_platen, roi_block, order_sign=-1)
-    f_default = default.measure(pixels_between_fringes=512 / 8).fringe_fraction
-    f_declared = declared.measure(pixels_between_fringes=512 / 8).fringe_fraction
+    f_default = default.measure(period_guess=512 / 8).fringe_fraction
+    f_declared = declared.measure(period_guess=512 / 8).fringe_fraction
 
     assert f_default == pytest.approx(1.0 - result.fraction_truth, abs=0.03)
     assert f_declared == pytest.approx(result.fraction_truth, abs=0.03)

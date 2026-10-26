@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import curve_fit
 
+from interflib._deprecation import renamed_arguments
 from interflib.fringe.fourier import estimate_carrier
 from interflib.fringe.models import (FitQuality, canonical_sinusoid, fit_quality,
                                      interference_model, signed_fraction, sine_seed)
@@ -102,7 +103,8 @@ class FringeFractionMeasurement:
         A, w, phi = canonical_sinusoid(*params[:3])
         return np.array([A, w, phi, params[3]])
 
-    def fit(self, pixels_between_fringes: float = None, max_iterations: int = 5000):
+    @renamed_arguments(pixels_between_fringes="period_guess")
+    def fit(self, period_guess: float = None, max_iterations: int = 5000):
         """Fit both profiles and store the fit quality.
 
         The block fit is seeded at the platen's fitted frequency but its frequency stays
@@ -110,8 +112,9 @@ class FringeFractionMeasurement:
 
         Parameters
         ----------
-        pixels_between_fringes : float, optional
-            Starting fringe period along the profile, px. If omitted it is estimated
+        period_guess : float, optional
+            Starting fringe period along the profile, px (the former name
+            ``pixels_between_fringes`` is deprecated). If omitted it is estimated
             from the power spectrum of the platen profile
             (:func:`interflib.fringe.fourier.estimate_carrier`), which needs at least four
             fringes in the profile.
@@ -122,11 +125,11 @@ class FringeFractionMeasurement:
         """
         if self.platen_profile is None:
             self.get_fringe_profiles()
-        if pixels_between_fringes is None:
-            pixels_between_fringes = 1.0 / estimate_carrier(self.platen_profile[:, None])
+        if period_guess is None:
+            period_guess = 1.0 / estimate_carrier(self.platen_profile[:, None])
 
         p0_platen = self._initial_parameter_guess(self.platen_profile, self.pixel_indices,
-                                                  2 * np.pi / pixels_between_fringes)
+                                                  2 * np.pi / period_guess)
         self.platen_params, cov_platen = curve_fit(
             interference_model, self.pixel_indices, self.platen_profile,
             p0=p0_platen, maxfev=max_iterations,
@@ -157,13 +160,14 @@ class FringeFractionMeasurement:
         self.fringe_fraction = signed_fraction(self.block_phase - self.platen_phase, self.order_sign)
         return self.fringe_fraction
 
-    def measure(self, pixels_between_fringes: float = None,
+    @renamed_arguments(pixels_between_fringes="period_guess")
+    def measure(self, period_guess: float = None,
                 max_iterations: int = 5000) -> FringeFractionResult:
         """Fit and compute the fraction in one call, returning a result object.
 
-        ``pixels_between_fringes`` is the starting period, estimated if omitted (see :meth:`fit`).
+        ``period_guess`` is the starting period, estimated if omitted (see :meth:`fit`).
         """
-        self.fit(pixels_between_fringes, max_iterations)
+        self.fit(period_guess, max_iterations)
         self.calculate_fraction()
         return FringeFractionResult(
             fringe_fraction=self.fringe_fraction, # type: ignore

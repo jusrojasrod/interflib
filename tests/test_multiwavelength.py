@@ -69,7 +69,7 @@ def test_recovers_synthetic_length_exactly():
 
     solver = MultiwavelengthEFSolver(wavelengths=wavelengths)
     solution = solver.solve(nominal_length=25_000_000.0, nominal_tolerance=1_000.0,
-                            fractions=fractions)
+                            fringe_fractions=fractions)
 
     assert solution.length == pytest.approx(true_length, abs=1e-6)
     expected_orders = [int(round(2.0 * true_length / lam - f))
@@ -88,7 +88,7 @@ def test_robust_to_small_fraction_noise():
 
     solver = MultiwavelengthEFSolver(wavelengths=wavelengths)
     solution = solver.solve(nominal_length=25_000_000.0, nominal_tolerance=1_000.0,
-                            fractions=noisy)
+                            fringe_fractions=noisy)
 
     # Correct integer order recovered => length within half the anchor wavelength.
     assert abs(solution.length - true_length) < wavelengths[0] / 2.0
@@ -118,7 +118,7 @@ def test_requires_at_least_two_wavelengths():
 def test_rejects_mismatched_fraction_count():
     solver = MultiwavelengthEFSolver(wavelengths=[632.9912, 543.5160])
     with pytest.raises(ValueError, match="same length"):
-        solver.solve(nominal_length=1e6, nominal_tolerance=1e3, fractions=[0.1])
+        solver.solve(nominal_length=1e6, nominal_tolerance=1e3, fringe_fractions=[0.1])
 
 
 def test_raises_when_tolerance_excludes_all_candidates():
@@ -127,7 +127,7 @@ def test_raises_when_tolerance_excludes_all_candidates():
     # are ~lambda/4 away, so a 1 nm tolerance leaves no candidate inside the window.
     nominal = 10_000 * 632.9912 / 2.0
     with pytest.raises(RuntimeError, match="within the nominal tolerance"):
-        solver.solve(nominal_length=nominal, nominal_tolerance=1.0, fractions=[0.5, 0.5])
+        solver.solve(nominal_length=nominal, nominal_tolerance=1.0, fringe_fractions=[0.5, 0.5])
 
 
 def test_circular_distance_wraps():
@@ -142,3 +142,17 @@ def test_anchor_fraction_is_reproduced_exactly():
     solution = solver.solve(LIU_NOMINAL_NM, LIU_TOLERANCE_NM, LIU_FRACTIONS)
     anchor_fraction = _frac(2.0 * solution.length / LIU_WAVELENGTHS[0])
     assert anchor_fraction == pytest.approx(LIU_FRACTIONS[0], abs=1e-9)
+
+
+def test_former_argument_and_field_names_still_work_with_a_warning():
+    """``fractions=`` and ``.correction`` are deprecated aliases of ``fringe_fractions`` and
+    ``.length_dev``."""
+    solver = MultiwavelengthEFSolver([667.8184, 587.5649, 501.5702, 447.1501])
+    with pytest.warns(DeprecationWarning, match="fringe_fractions"):
+        old = solver.solve(nominal_length=1_400_000.0, nominal_tolerance=1_000.0, fractions=[0.28, 0.85, 0.90, 0.23])
+    new = solver.solve(nominal_length=1_400_000.0, nominal_tolerance=1_000.0, fringe_fractions=[0.28, 0.85, 0.90, 0.23])
+    assert old.length == new.length
+    with pytest.warns(DeprecationWarning, match="length_dev"):
+        assert old.correction == new.length_dev
+    with pytest.raises(TypeError, match="both"):
+        solver.solve(1_400_000.0, 1_000.0, fractions=[0.1] * 4, fringe_fractions=[0.1] * 4)

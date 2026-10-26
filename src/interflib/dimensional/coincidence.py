@@ -37,6 +37,8 @@ from typing import Sequence
 
 import numpy as np
 
+from interflib._deprecation import renamed_arguments
+
 from ._fractions import circular_distance as _circular_distance
 from ._fractions import fractional_part as _fractional_part
 
@@ -87,8 +89,9 @@ class CoincidenceEFSolver:
         # circular fraction residual between the colours is within their combined width.
         self._coincidence_tolerance = 2.0 * self.fraction_uncertainty
 
+    @renamed_arguments(fractions="fringe_fractions")
     def solve(self, nominal_length: float, nominal_tolerance: float,
-              fractions: Sequence[float]) -> CoincidenceSolution:
+              fringe_fractions: Sequence[float]) -> CoincidenceSolution:
         """Find the length(s) where every colour's fringe comb coincides.
 
         Parameters
@@ -97,9 +100,9 @@ class CoincidenceEFSolver:
             Rough prior length, in nanometres, that localises the search window.
         nominal_tolerance : float
             Half-width of the search window (the ``+/-`` value), in nanometres.
-        fractions : sequence of float
-            Measured fringe fractions in [0, 1), one per wavelength, in the same order
-            as ``wavelengths``.
+        fringe_fractions : sequence of float
+            Measured fringe fractions ``F_i`` in [0, 1), one per wavelength, in the same
+            order as ``wavelengths``. The former name ``fractions`` is deprecated.
 
         Returns
         -------
@@ -108,11 +111,11 @@ class CoincidenceEFSolver:
         Raises
         ------
         ValueError
-            If ``fractions`` and ``wavelengths`` differ in length.
+            If ``fringe_fractions`` and ``wavelengths`` differ in length.
         RuntimeError
             If the search window contains no candidate length for the reference colour.
         """
-        fractions = np.asarray(fractions, dtype=float)
+        fractions = np.asarray(fringe_fractions, dtype=float)
         if fractions.shape != self.wavelengths.shape:
             raise ValueError("fractions and wavelengths must have the same length.")
 

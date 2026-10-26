@@ -43,9 +43,7 @@ def test_end_to_end_recovers_length(name, nominal_mm, wavelength_nm):
     expected_fraction = true_order - np.floor(true_order)
     assert fraction == pytest.approx(expected_fraction, abs=0.02)
 
-    # Simulator uses lambda directly (no air index) -> pass it as lambda_air.
-    gb = GaugeBlockLength(lambda_air=wavelength_nm / 1000.0,
-                          Lp=nominal_mm, C=11.5e-6, t_block=20.0,
-                          obs_fraction=fraction)
-    length_mm = gb.block_length()
-    assert length_mm == pytest.approx(nominal_mm, abs=2e-5)  # within 20 nm
+    # Simulator uses lambda directly (no air index) -> it is the wavelength in the medium.
+    gb = GaugeBlockLength(wavelength=wavelength_nm, nominal_length=nominal_mm * 1e6, cte=11.5e-6,
+                          temp_c=20.0, fringe_fraction=fraction)
+    assert gb.solve().length == pytest.approx(nominal_mm * 1e6, abs=20.0)  # within 20 nm

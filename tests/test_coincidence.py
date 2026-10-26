@@ -117,11 +117,11 @@ def test_requires_at_least_two_wavelengths():
 def test_rejects_mismatched_fraction_count():
     solver = CoincidenceEFSolver(wavelengths=[632.9912, 543.5160])
     with pytest.raises(ValueError, match="same length"):
-        solver.solve(nominal_length=1e6, nominal_tolerance=1e3, fractions=[0.1])
+        solver.solve(nominal_length=1e6, nominal_tolerance=1e3, fringe_fractions=[0.1])
 
 
 def test_raises_when_window_has_no_candidate():
     solver = CoincidenceEFSolver(wavelengths=[632.9912, 543.5160])
     nominal = 10_000 * 632.9912 / 2.0             # sits at an integer order (fraction ~0)
     with pytest.raises(RuntimeError, match="within the search window"):
-        solver.solve(nominal_length=nominal, nominal_tolerance=1.0, fractions=[0.5, 0.5])
+        solver.solve(nominal_length=nominal, nominal_tolerance=1.0, fringe_fractions=[0.5, 0.5])

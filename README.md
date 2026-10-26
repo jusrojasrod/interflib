@@ -228,7 +228,7 @@ wavelengths = [667.8184, 587.5649, 501.5702, 447.1501]   # in air, nm; the first
 fractions = [0.28, 0.85, 0.90, 0.23]
 
 multi = MultiwavelengthEFSolver(wavelengths).solve(
-    nominal_length=1_400_000.0, nominal_tolerance=1_000.0, fractions=fractions)
+    nominal_length=1_400_000.0, nominal_tolerance=1_000.0, fringe_fractions=fractions)
 print(f"{multi.length / 1000:.6f} {multi.integer_orders}")   # -> 1399.840861 [4192, 4764, 5581, 6261]
 
 comb = CoincidenceEFSolver(wavelengths).solve(1_400_000.0, 1_000.0, fractions)
@@ -256,21 +256,44 @@ from the fraction measured above.
 from interflib.dimensional.mefm import MonochromaticEFMSolver
 
 mefm = MonochromaticEFMSolver(wavelength=543.5)   # the wavelength of the simulated scene
-block = mefm.evaluate_block(nominal_length=2e6, delta_nominal_length=55.0, uncertainty=30.0,
-                            measured_fraction=res.fraction)
-# deviation from nominal, nm
-print(f"{block['c_difference_nm']:.1f}")           # -> 51.0
+block = mefm.solve(nominal_length=2e6,             # L', nm
+                   prior_length_dev=55.0,          # mechanical deviation from nominal, nm
+                   prior_U=30.0,                   # its expanded uncertainty, nm
+                   fringe_fraction=res.fraction)
+# deviation from nominal accepted by the optics, nm
+print(f"{block.length_dev:.1f}")                    # -> 51.0
 ```
 
-`GaugeBlockLength` performs the classical single-wavelength computation. It takes the
-nominal length as prior and reduces the result to 20 °C. Its `from_environment` method
-applies the air index itself.
+**One wavelength, nominal length as prior.** `GaugeBlockLength` is the classical
+single-wavelength computation. It works when the block is within `λ/4` of its nominal
+length, and it reduces the result to 20 °C. `GaugeBlockLength.from_environment` takes the
+vacuum wavelength and the air conditions, and computes the air index itself.
+
+```python
+from interflib.dimensional.excess_fraction import GaugeBlockLength
+
+classic = GaugeBlockLength(wavelength=543.5, nominal_length=2e6, cte=11.5e-6, temp_c=20.0,
+                           fringe_fraction=res.fraction).solve()
+# deviation from nominal, nm
+print(f"{classic.length_dev:.1f}")                  # -> 51.0
+```
 
 ## Conventions
 
-- **Units.** Wavelengths and lengths are in nanometres throughout the public API. The
-  exception is `GaugeBlockLength`, which uses millimetres. Images are rows × columns:
-  `y` is the row index, increasing downwards, and `x` is the column index.
+- **Units.** Wavelengths and lengths are in nanometres throughout the public API. Images
+  are rows × columns: `y` is the row index, increasing downwards, and `x` is the column
+  index.
+- **Names.** Arguments and results use the names of the project nomenclature:
+  - `wavelength` and `wavelength_vac`;
+  - `nominal_length` (`L'`), `length` (`L`) and `length_dev` (`L − L'`);
+  - `fringe_fraction` (`F`), `cte` (`α`), `temp_c` (`t`) and `n_air`.
+
+  The former names still work during a transition and raise a `DeprecationWarning`:
+  - `GaugeBlockLength(lambda_air, Lp [mm], C, t_block, obs_fraction)` and `block_length()`
+    (mm);
+  - `MonochromaticEFMSolver.evaluate_block()`, which returns a dict;
+  - `fractions=` in the multi-wavelength solvers, and `.correction` in their results;
+  - `pixels_between_fringes=` in `FringeFractionMeasurement`.
 - **Phase.** The column phases are those of `A·sin(w·y + φ) + C` with `w > 0`, so the
   phase increases towards `+y`. The fraction is
   `F = frac(order_sign·(φ_block − φ_platen)/2π)`.

@@ -9,7 +9,7 @@ from interflib.fringe.models import interference_model
 DATA = Path(__file__).parent / "data"
 
 
-def _measure_profiles(platen, block, pixels_between_fringes, centre_offset=0.0):
+def _measure_profiles(platen, block, period_guess, centre_offset=0.0):
     """Run the fraction measurement on two 1-D profiles, one image column each.
 
     ``centre_offset`` shifts the fit coordinate so that ``x = 0`` falls on that sample,
@@ -20,7 +20,7 @@ def _measure_profiles(platen, block, pixels_between_fringes, centre_offset=0.0):
     m = FringeFractionMeasurement(img, (0, n, 0, 1), (0, n, 1, 2))
     m.get_fringe_profiles()
     m.pixel_indices = m.pixel_indices - centre_offset
-    return m, m.measure(pixels_between_fringes=pixels_between_fringes)
+    return m, m.measure(period_guess=period_guess)
 
 
 def test_initial_guess_recovers_amplitude_phase_offset_at_known_frequency():
@@ -119,7 +119,7 @@ def test_signed_fraction_reverses_the_order_and_validates_the_sign():
 
 
 def test_period_is_estimated_when_omitted():
-    """Without pixels_between_fringes the starting period comes from the platen spectrum,
+    """Without period_guess the starting period comes from the platen spectrum,
     and the fraction matches the run with the period given."""
     y = np.arange(500) - 250.0
     platen = 1 + 0.8 * np.sin(2 * np.pi / 37.6 * y + 0.3)
@@ -127,3 +127,14 @@ def test_period_is_estimated_when_omitted():
     _, given = _measure_profiles(platen, block, 37.6, centre_offset=250)
     _, estimated = _measure_profiles(platen, block, None, centre_offset=250)
     assert abs((estimated.fringe_fraction - given.fringe_fraction + 0.5) % 1.0 - 0.5) < 1e-9
+
+
+def test_pixels_between_fringes_is_a_deprecated_alias():
+    import pytest
+
+    y = np.arange(500) - 250.0
+    img = np.column_stack([1 + 0.8 * np.sin(2 * np.pi / 37.6 * y), 1 + 0.8 * np.sin(2 * np.pi / 37.6 * y + 1.0)])
+    m = FringeFractionMeasurement(img, (0, 500, 0, 1), (0, 500, 1, 2))
+    with pytest.warns(DeprecationWarning, match="period_guess"):
+        old = m.measure(pixels_between_fringes=37.6).fringe_fraction
+    assert old == pytest.approx(m.measure(period_guess=37.6).fringe_fraction, abs=1e-12)

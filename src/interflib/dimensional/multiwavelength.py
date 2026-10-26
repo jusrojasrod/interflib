@@ -37,6 +37,8 @@ from typing import Sequence
 
 import numpy as np
 
+from interflib._deprecation import renamed_arguments, warn_deprecated
+
 from ._fractions import circular_distance as _circular_distance
 from ._fractions import fractional_part as _fractional_part
 
@@ -47,8 +49,13 @@ class OrderCandidate:
 
     integer_offset: int   # m: order offset from the nominal anchor order (Liu eq. 5)
     length: float         # candidate real length L' + c_j, in nm
-    correction: float     # c_j = length - nominal, in nm
+    length_dev: float     # c_j = length - nominal, in nm
     residual: float       # RMS circular fraction residual over the selecting wavelengths
+
+    @property
+    def correction(self):
+        warn_deprecated("OrderCandidate.correction is deprecated; use length_dev")
+        return self.length_dev
 
 
 @dataclass
@@ -56,11 +63,16 @@ class ExcessFractionSolution:
     """Result of a multi-wavelength excess-fraction solve. Lengths in nanometres."""
 
     length: float                # resolved absolute length L_real, in nm
-    correction: float            # c_J = L_real - nominal, in nm
+    length_dev: float            # c_J = L_real - nominal, in nm
     integer_orders: list[int]    # resolved integer order N_i, one per wavelength (input order)
     residual: float              # RMS fraction residual of the winning candidate, in [0, 0.5]
     margin: float                # residual gap to the runner-up; small margin => ambiguous
     candidates: list[OrderCandidate] = field(default_factory=list)  # all, ranked by residual
+
+    @property
+    def correction(self):
+        warn_deprecated("ExcessFractionSolution.correction is deprecated; use length_dev")
+        return self.length_dev
 
 
 class MultiwavelengthEFSolver:
@@ -84,8 +96,9 @@ class MultiwavelengthEFSolver:
         if np.any(self.wavelengths <= 0):
             raise ValueError("Wavelengths must be positive.")
 
+    @renamed_arguments(fractions="fringe_fractions")
     def solve(self, nominal_length: float, nominal_tolerance: float,
-              fractions: Sequence[float]) -> ExcessFractionSolution:
+              fringe_fractions: Sequence[float]) -> ExcessFractionSolution:
         """Resolve the integer order and return the absolute length.
 
         Parameters
@@ -97,9 +110,9 @@ class MultiwavelengthEFSolver:
             Half-width of the prior length error range (the ``+/-`` value), in
             nanometres. The search is restricted to real lengths within
             ``nominal_length +/- nominal_tolerance``.
-        fractions : sequence of float
-            Measured fringe fractions in [0, 1), one per wavelength, in the same order
-            as ``wavelengths``.
+        fringe_fractions : sequence of float
+            Measured fringe fractions ``F_i`` in [0, 1), one per wavelength, in the same
+            order as ``wavelengths``. The former name ``fractions`` is deprecated.
 
         Returns
         -------
@@ -109,11 +122,11 @@ class MultiwavelengthEFSolver:
         Raises
         ------
         ValueError
-            If ``fractions`` and ``wavelengths`` differ in length.
+            If ``fringe_fractions`` and ``wavelengths`` differ in length.
         RuntimeError
             If no candidate length falls within the nominal tolerance window.
         """
-        fractions = np.asarray(fractions, dtype=float)
+        fractions = np.asarray(fringe_fractions, dtype=float)
         if fractions.shape != self.wavelengths.shape:
             raise ValueError("fractions and wavelengths must have the same length.")
 
@@ -142,7 +155,7 @@ class MultiwavelengthEFSolver:
             residuals = _circular_distance(predicted, selecting_fractions)
             rms = float(np.sqrt(np.mean(residuals ** 2)))
             candidates.append(OrderCandidate(integer_offset=offset, length=length,
-                                             correction=correction, residual=rms))
+                                             length_dev=correction, residual=rms))
 
         if not candidates:
             raise RuntimeError(
@@ -160,7 +173,7 @@ class MultiwavelengthEFSolver:
 
         return ExcessFractionSolution(
             length=best.length,
-            correction=best.correction,
+            length_dev=best.length_dev,
             integer_orders=integer_orders,
             residual=best.residual,
             margin=margin,
@@ -176,6 +189,6 @@ if __name__ == "__main__":
                             fractions=[0.28, 0.85])
     print(f"L_real          : {solution.length / 1000.0:.6f} um "
           f"(Liu Table II: 1399.840861 um)")
-    print(f"correction c_J  : {solution.correction:.3f} nm")
+    print(f"deviation c_J   : {solution.length_dev:.3f} nm")
     print(f"integer orders  : {solution.integer_orders}")
     print(f"residual/margin : {solution.residual:.2e} / {solution.margin:.2e}")

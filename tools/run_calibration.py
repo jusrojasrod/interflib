@@ -35,7 +35,9 @@ DEFAULT_IMAGE = "block_10.0_mm-WL_632.9905846-(simulated).png"
 ROI_PLATEN = (700, 1900, 500, 900)   # (y1, y2, x1, x2)
 ROI_BLOCK = (700, 1900, 1000, 1400)
 
-STEEL_ALPHA = 11.5e-6  # thermal expansion coefficient, K^-1
+# Linear thermal expansion coefficient of gauge-block steel, 1/K: the value declared by the
+# manufacturer (Mahr), as quoted in CENAM calibration certificate CNM-CC-740-606/2023.
+STEEL_CTE = 11.5e-6
 
 
 def parse_filename(name: str) -> tuple[float, float | None]:
@@ -66,12 +68,12 @@ def run(image_name: str, wavelength_nm: float | None = None,
     true_order = 2 * nominal_mm * 1e6 / wavelength_nm
     expected_fraction = true_order - np.floor(true_order)
 
-    # Simulator uses lambda directly (no air index) -> pass it as lambda_air (nm).
-    gb = GaugeBlockLength(lambda_air=wavelength_nm,
-                          Lp=nominal_mm, C=STEEL_ALPHA, t_block=20.0,
-                          obs_fraction=fraction)
-    length_mm = gb.block_length()
-    deviation_nm = (length_mm - nominal_mm) * 1e6
+    # Simulator uses lambda directly (no air index) -> it is the wavelength in the medium (nm).
+    gb = GaugeBlockLength(wavelength=wavelength_nm, nominal_length=nominal_mm * 1e6, cte=STEEL_CTE,
+                          temp_c=20.0, fringe_fraction=fraction)
+    solution = gb.solve()
+    length_mm = solution.length / 1e6
+    deviation_nm = solution.length_dev
 
     print("=" * 64)
     print(f"END-TO-END  |  {image_name}")
@@ -81,7 +83,7 @@ def run(image_name: str, wavelength_nm: float | None = None,
     print(f"fit quality R^2     : platen {result.platen_quality.r2:.4f}  "
           f"block {result.block_quality.r2:.4f}")
     print(f"measured fraction   : {fraction:.4f}   (expected {expected_fraction:.4f})")
-    print(f"integer order E     : {int(np.floor(gb.estimate_integer_fringes()))}")
+    print(f"integer order       : {solution.integer_order}")
     print(f"absolute length L20 : {length_mm:.8f} mm")
     print(f"deviation nominal   : {deviation_nm:+.1f} nm")
 
