@@ -43,6 +43,20 @@ class TestMonochromaticEFMSolver:
                 measured_fraction=0.9 # This will likely be outside +/- 5nm of nominal
             )
 
+    @pytest.mark.parametrize("true_deviation", [2000.0, -2000.0, 15000.0])
+    def test_large_mechanical_deviation(self, solver, true_deviation):
+        """Recovers the length when the deviation spans many lambda/2 orders."""
+        nominal = 100e6                              # 100 mm in nm
+        true_length = nominal + true_deviation
+        fraction = (2 * true_length / solver.wavelength) % 1.0
+        result = solver.evaluate_block(
+            nominal_length=nominal,
+            delta_nominal_length=true_deviation + 10.0,   # prior off by 10 nm
+            uncertainty=30.0,
+            measured_fraction=fraction,
+        )
+        assert result["c_difference_nm"] == pytest.approx(true_deviation, abs=1e-6)
+
     def test_wavelength_properties(self, solver):
         assert solver.lambda_over_2 == 632.9912 / 2.0
         assert solver.lambda_over_4 == 632.9912 / 4.0

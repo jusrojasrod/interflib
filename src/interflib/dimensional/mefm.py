@@ -15,7 +15,7 @@ class MonochromaticEFMSolver:
         Parameters
         ----------
         wavelength: float 
-            Laser wavelength in air/vacuum in nanometers (nm).
+            Laser wavelength in air (the medium of the measurement), in nanometers (nm).
         """
         self.wavelength = wavelength
         self.lambda_over_4 = wavelength / 4.0
@@ -54,7 +54,11 @@ class MonochromaticEFMSolver:
         fractional_prime, _ = np.modf((2 * nominal_length) / self.wavelength)
         lower_bound = delta_nominal_length - uncertainty
         upper_bound = delta_nominal_length + uncertainty
-        m_j_values = np.arange(-5, 6)
+        # Candidates are spaced lambda/2 apart; centre the integer search on the order that
+        # puts c closest to the mechanical deviation, so any deviation size is covered.
+        m_centre = np.round(delta_nominal_length / self.lambda_over_2
+                            - measured_fraction + fractional_prime)
+        m_j_values = m_centre + np.arange(-2, 3)
         c_values = self.lambda_over_2 * (m_j_values + measured_fraction - fractional_prime)
         valid_c = [c for c in c_values if lower_bound <= c <= upper_bound]
 
