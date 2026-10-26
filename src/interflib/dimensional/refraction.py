@@ -1,63 +1,97 @@
 """Refractive index of air and wavelength in air (modified Edlen, Birch & Downs).
+
+The index is computed with the modified Edlen equation of Birch & Downs (Metrologia 30,
+155-162, 1993, with the 1994 correction), in the form documented by J. A. Stone and
+J. H. Zimmerman, "Index of Refraction of Air", NIST Engineering Metrology Toolbox,
+Appendix A-IV, eq. (A42)-(A49). The saturation vapour pressure follows the IAPWS
+formulas of the same document, Appendix A-I (over water, eq. A1-A7; over ice, eq.
+A8-A13). The input limits are those of the NIST calculator (section IV). All constants
+live in :mod:`interflib.constants`.
 """
 import math
 import warnings
 from typing import Optional
 
+from interflib import constants as k
+
+
 class EdlenInputBoundsError(ValueError):
-    """Custom exception raised when inputs are physically out of valid bounds."""
-    pass
+    """Raised when an input lies outside the range accepted by the calculation."""
+
 
 class EdlenRefractiveIndex:
-    """
-    Calculator for the refractive index of air and wavelength in air
-    based on the modified Edlen equation and Huang / IAPWS equations.
-    """
+    """Refractive index of air and wavelength in air from the environmental state.
 
-    # Edlen Equation Constants
-    _EDLEN_A = 8342.54
-    _EDLEN_B = 2406147.0
-    _EDLEN_C = 15998.0
-    _EDLEN_D = 96095.43
-    _EDLEN_E = 0.601
-    _EDLEN_F = 0.00972
-    _EDLEN_G = 0.003661
-    
-    # Physical Constants
-    _CELSIUS_TO_KELVIN = 273.15
-    _WATER_TRIPLE_POINT_K = 273.16
+    Parameters
+    ----------
+    temperature : float
+        Air temperature, degrees Celsius.
+    pressure : float
+        Air pressure, pascals.
+    relative_humidity : float, optional
+        Relative humidity, percent (0 to 100).
+    dew_point : float, optional
+        Dew-point temperature, degrees Celsius.
+    frost_point : float, optional
+        Frost-point temperature, degrees Celsius.
+
+    Exactly one of ``relative_humidity``, ``dew_point`` and ``frost_point`` must be
+    given.
+
+    Raises
+    ------
+    ValueError
+        If no humidity state or more than one is given, or if the dew or frost point
+        exceeds the air temperature.
+    EdlenInputBoundsError
+        If the temperature, pressure or relative humidity lies outside the accepted
+        range. A pressure outside 60-120 kPa or a humidity above 85 % only warns.
+    """
 
     def __init__(
-        self, 
-        temperature: float, 
-        pressure: float, 
-        relative_humidity: Optional[float] = None, 
-        dew_point: Optional[float] = None, 
-        frost_point: Optional[float] = None
+        self,
+        temperature: float,
+        pressure: float,
+        relative_humidity: Optional[float] = None,
+        dew_point: Optional[float] = None,
+        frost_point: Optional[float] = None,
     ):
-        """
-        Initializes the environmental conditions for the measurements.
-
-        Args:
-            temperature: Air temperature in degrees Celsius (°C).
-            pressure: Air pressure in Pascals (Pa).
-            relative_humidity: Fractional relative humidity (0 to 100).
-            dew_point: Set to the dew point temperature if the conditions represent the dew point.
-            frost_point: Set to the frost point temperature if the conditions represent the frost point.
-        """
-        if relative_humidity is None and dew_point is None and frost_point is None:
+        given = sum(v is not None for v in (relative_humidity, dew_point, frost_point))
+        if given == 0:
             raise ValueError(
                 "Incomplete environment state: provide exactly one of 'relative_humidity', "
                 "'dew_point', or 'frost_point'."
             )
-        if not (-40.0 <= temperature <= 100.0): raise EdlenInputBoundsError(f"Temperature {temperature} °C is out of bounds. Must be between -40 °C and 100 °C.")
-        if not (10000.0 <= pressure <= 140000.0): raise EdlenInputBoundsError(f"Pressure {pressure} Pa is out of bounds. Must be between 10,000 Pa and 140,000 Pa.")
-        if not (60000.0 <= pressure <= 120000.0): warnings.warn(f"Pressure {pressure} Pa is outside the optimal recommended range (60,000 to 120,000 Pa).", UserWarning)
+        if given > 1:
+            raise ValueError(
+                "Ambiguous environment state: provide exactly one of 'relative_humidity', "
+                "'dew_point', or 'frost_point'."
+            )
+
+        t_lo, t_hi = k.AIR_TEMPERATURE_RANGE_C
+        if not t_lo <= temperature <= t_hi:
+            raise EdlenInputBoundsError(
+                f"Temperature {temperature} °C is out of bounds. Must be between {t_lo} °C and {t_hi} °C.")
+        p_lo, p_hi = k.AIR_PRESSURE_RANGE_PA
+        if not p_lo <= pressure <= p_hi:
+            raise EdlenInputBoundsError(
+                f"Pressure {pressure} Pa is out of bounds. Must be between {p_lo:,.0f} Pa and {p_hi:,.0f} Pa.")
+        r_lo, r_hi = k.AIR_PRESSURE_REALISTIC_PA
+        if not r_lo <= pressure <= r_hi:
+            warnings.warn(f"Pressure {pressure} Pa is outside the optimal recommended range "
+                          f"({r_lo:,.0f} to {r_hi:,.0f} Pa).", UserWarning, stacklevel=2)
         if relative_humidity is not None:
-            if not (0.0 <= relative_humidity <= 100.0): raise EdlenInputBoundsError(f"Relative humidity {relative_humidity} % is invalid. Must be between 0 and 100.")
-            if relative_humidity > 85.0: warnings.warn(f"Relative humidity is {relative_humidity}%. Values above 85% pose a risk of condensation.", UserWarning)
-        if dew_point is not None and dew_point > temperature: raise ValueError("Dew point cannot be higher than ambient temperature (RH > 100%).")
-        if frost_point is not None and frost_point > temperature: raise ValueError("Frost point cannot be higher than ambient temperature (RH > 100%).")
+            if not 0.0 <= relative_humidity <= 100.0:
+                raise EdlenInputBoundsError(
+                    f"Relative humidity {relative_humidity} % is invalid. Must be between 0 and 100.")
+            if relative_humidity > k.AIR_HUMIDITY_CONDENSATION_PCT:
+                warnings.warn(f"Relative humidity is {relative_humidity}%. Values above "
+                              f"{k.AIR_HUMIDITY_CONDENSATION_PCT:.0f}% pose a risk of condensation.",
+                              UserWarning, stacklevel=2)
+        if dew_point is not None and dew_point > temperature:
+            raise ValueError("Dew point cannot be higher than ambient temperature (RH > 100%).")
+        if frost_point is not None and frost_point > temperature:
+            raise ValueError("Frost point cannot be higher than ambient temperature (RH > 100%).")
 
         self.temperature = temperature
         self.pressure = pressure
@@ -67,83 +101,74 @@ class EdlenRefractiveIndex:
 
     @property
     def vapor_pressure(self) -> float:
-        """
-        Dynamically computes the vapor pressure (Pa) based on current conditions.
-        Using a property ensures this value is always up to date if temperature 
-        or humidity changes after instantiation.
-        """
-        if self.dew_point is not None: return self._saturation_vapor_pressure_over_water(self.dew_point)
-        if self.frost_point is not None: return self._saturation_vapor_pressure_over_ice(self.frost_point) 
-        if self.relative_humidity is not None: 
-            if self.temperature >= 0.0: p_sv = self._saturation_vapor_pressure_over_water(self.temperature)
-            else: p_sv = self._saturation_vapor_pressure_over_ice(self.temperature)
-            return (self.relative_humidity / 100.0) * p_sv
+        """Partial pressure of water vapour, Pa, from the humidity state.
 
-    @classmethod
-    def _saturation_vapor_pressure_over_water(cls,temperature: float) -> float:
+        Computed on access, so it follows later changes of the temperature or humidity.
+        [NIST] eq. (A14)-(A15): the saturation pressure at the dew (or frost) point, or
+        the relative humidity times the saturation pressure at the air temperature (over
+        ice below 0 °C).
         """
-        Calculates saturation vapor pressure over water.
-        Implemented as a static method to ensure pure function behavior for easy testing.
-        """
-        k1, k2, k3 = 1.16705214528e3, -7.24213167032e5, -1.70738469401e1
-        k4, k5, k6 = 1.20208247025e4, -3.23255503223e6, 1.49151086135e1
-        k7, k8, k9 = -4.82326573616e03, 4.05113405421e05, -2.38555575678e-1
-        k10 = 6.50175348448e2
-        
-        t_kelvin = temperature + cls._CELSIUS_TO_KELVIN
-        omega = t_kelvin + (k9 / (t_kelvin - k10))
-        
-        a = omega**2 + k1 * omega + k2
-        b = k3 * omega**2 + k4 * omega + k5
-        c = k6 * omega**2 + k7 * omega + k8
-        x = -b + (b**2 - 4 * a * c)**0.5
-        return 1e6 * (2 * c / x)**4
+        if self.dew_point is not None:
+            return self._saturation_vapor_pressure_over_water(self.dew_point)
+        if self.frost_point is not None:
+            return self._saturation_vapor_pressure_over_ice(self.frost_point)
+        if self.temperature >= 0.0:
+            p_sv = self._saturation_vapor_pressure_over_water(self.temperature)
+        else:
+            p_sv = self._saturation_vapor_pressure_over_ice(self.temperature)
+        return (self.relative_humidity / 100.0) * p_sv
 
-    @classmethod
-    def _saturation_vapor_pressure_over_ice(cls, temperature: float) -> float:
-        """
-        Calculates saturation vapor pressure over ice.
-        """
-        a1, a2 = -13.928169, 34.7078238
-        t_kelvin = temperature + cls._CELSIUS_TO_KELVIN
-        theta = t_kelvin / cls._WATER_TRIPLE_POINT_K
-        y = a1 * (1 - theta**(-1.5)) + a2 * (1 - theta**(-1.25))
-        return 611.657 * math.exp(y)
+    @staticmethod
+    def _saturation_vapor_pressure_over_water(temperature: float) -> float:
+        """Saturation vapour pressure over water, Pa, at ``temperature`` (°C); eq. (A1)-(A7)."""
+        k1, k2, k3, k4, k5, k6, k7, k8, k9, k10 = k.IAPWS_WATER_K
+        t_kelvin = temperature + k.CELSIUS_TO_KELVIN
+        omega = t_kelvin + k9 / (t_kelvin - k10)
+        a = omega ** 2 + k1 * omega + k2
+        b = k3 * omega ** 2 + k4 * omega + k5
+        c = k6 * omega ** 2 + k7 * omega + k8
+        x = -b + (b ** 2 - 4 * a * c) ** 0.5
+        return 1e6 * (2 * c / x) ** 4
+
+    @staticmethod
+    def _saturation_vapor_pressure_over_ice(temperature: float) -> float:
+        """Saturation vapour pressure over ice, Pa, at ``temperature`` (°C); eq. (A8)-(A13)."""
+        theta = (temperature + k.CELSIUS_TO_KELVIN) / k.WATER_TRIPLE_POINT_K
+        y = k.IAPWS_ICE_A1 * (1 - theta ** -1.5) + k.IAPWS_ICE_A2 * (1 - theta ** -1.25)
+        return k.WATER_TRIPLE_POINT_PRESSURE_PA * math.exp(y)
 
     def index_refraction(self, wavelength: float) -> float:
-        """
-        Calculates the refractive index of air for a given wavelength.
+        """Refractive index of air at a vacuum wavelength.
 
-        Args:
-            wavelength: Wavelength in vacuum in nanometers (nm).
+        Parameters
+        ----------
+        wavelength : float
+            Vacuum wavelength, nanometres. Accepted from 300 to 1700 nm; outside the
+            350-650 nm range claimed by Birch & Downs a warning is issued.
 
-        Returns:
-            The refractive index of air.
+        Returns
+        -------
+        float
+            Refractive index ``n`` of air, [NIST] eq. (A42)-(A49).
         """
-        if not (300.0 <= wavelength <= 1700.0): raise EdlenInputBoundsError(f"Wavelength {wavelength} nm is out of bounds. Must be between 300 and 1700 nm.")
-        if not (350.0 <= wavelength <= 650.0): warnings.warn(f"Wavelength {wavelength} nm is outside the strictly conservative Birch and Downs range (350 to 650 nm).", UserWarning)
-        # Aliases
-        t = self.temperature
-        p = self.pressure
-        p_v = self.vapor_pressure
-        wavelength_um = wavelength / 1000.0   # the dispersion formula is written in um^-2
-        s = 1.0 / wavelength_um**2
-        
-        n_s = 1 + 10**(-8) * (self._EDLEN_A + self._EDLEN_B / (130.0 - s) + self._EDLEN_C / (38.9 - s))
-        x = (1 + 10**(-8) * (self._EDLEN_E - self._EDLEN_F * t) * p) / (1 + self._EDLEN_G * t)
-        n_tp = 1 + p * (n_s - 1) * x / self._EDLEN_D
-        n = n_tp - 1e-10 * (292.75 / (t + self._CELSIUS_TO_KELVIN)) * (3.7345 - 0.0401 * s) * p_v
-        return n
+        w_lo, w_hi = k.VACUUM_WAVELENGTH_RANGE_NM
+        if not w_lo <= wavelength <= w_hi:
+            raise EdlenInputBoundsError(
+                f"Wavelength {wavelength} nm is out of bounds. Must be between {w_lo:.0f} and {w_hi:.0f} nm.")
+        e_lo, e_hi = k.EDLEN_WAVELENGTH_RANGE_NM
+        if not e_lo <= wavelength <= e_hi:
+            warnings.warn(f"Wavelength {wavelength} nm is outside the strictly conservative Birch and "
+                          f"Downs range ({e_lo:.0f} to {e_hi:.0f} nm).", UserWarning, stacklevel=2)
+        t, p, p_v = self.temperature, self.pressure, self.vapor_pressure
+        sigma2 = 1.0 / (wavelength / 1000.0) ** 2      # the dispersion formula is written in um^-2
+
+        n_s = 1 + 1e-8 * (k.EDLEN_A + k.EDLEN_B / (k.EDLEN_DISPERSION_POLE_1 - sigma2)
+                          + k.EDLEN_C / (k.EDLEN_DISPERSION_POLE_2 - sigma2))
+        x = (1 + 1e-8 * (k.EDLEN_E - k.EDLEN_F * t) * p) / (1 + k.EDLEN_G * t)
+        n_tp = 1 + p * (n_s - 1) * x / k.EDLEN_D
+        vapour = (k.EDLEN_VAPOUR_T_REF / (t + k.CELSIUS_TO_KELVIN)) * (k.EDLEN_VAPOUR_H1 - k.EDLEN_VAPOUR_H2 * sigma2)
+        return n_tp - 1e-10 * vapour * p_v
 
     def wavelength_in_air(self, wavelength: float) -> float:
-        """
-        Calculates the wavelength in air.
-
-        Args:
-            wavelength: Wavelength in vacuum in nanometers (nm).
-
-        Returns:
-            The wavelength in air in nanometers (nm).
-        """
-        n = self.index_refraction(wavelength)
-        return wavelength / n
+        """Wavelength in air, nanometres, for a vacuum ``wavelength`` in nanometres."""
+        return wavelength / self.index_refraction(wavelength)

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .models import parabolic_vertex
 from .fourier import (
     PhaseMap,
     demodulate_2d,
@@ -130,12 +131,7 @@ def edge_from_modulation(img, rows, search, fft_rows=None, carrier=None, bandwid
     sel = slice(rows[0] - fft_rows[0], rows[1] - fft_rows[0])
     profile = np.nanmean(demod.modulation[sel], axis=0)
     i = int(np.nanargmin(profile))
-    delta = 0.0
-    if 0 < i < len(profile) - 1:
-        a, b, c = profile[i - 1:i + 2]
-        curvature = a - 2 * b + c
-        if curvature > 0:
-            delta = 0.5 * (a - c) / curvature
+    delta = parabolic_vertex(*profile[i - 1:i + 2]) if 0 < i < len(profile) - 1 else 0.0
     contrast = float(1.0 - profile[i] / np.nanmedian(profile))
     return ModulationEdge(edge_x=float(xs[i] + delta), x=xs, profile=profile, contrast=contrast)
 

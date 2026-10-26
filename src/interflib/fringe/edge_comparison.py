@@ -45,7 +45,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import curve_fit
 
-from .models import canonical_sinusoid, fit_quality, interference_model, signed_fraction
+from .models import (canonical_sinusoid, fit_quality, interference_model, parabolic_vertex, signed_fraction,
+                     sine_seed)
 
 
 @dataclass
@@ -121,7 +122,12 @@ class EdgeFractionResult:
     order_sign: int = 1
 
 
-def detect_edge_column(img, rows=(600, 1600), search=(1000, 1300), smooth=5) -> int:
+def _middle_half(n_rows):
+    # Default row range: the middle half of the frame, clear of the top and bottom borders.
+    return n_rows // 4, n_rows - n_rows // 4
+
+
+def detect_edge_column(img, rows=None, search=None, smooth=5) -> int:
     """Column of the block edge from the mean horizontal intensity jump.
 
     Along the edge the fringes of block and platen are out of step, so the mean
@@ -131,10 +137,13 @@ def detect_edge_column(img, rows=(600, 1600), search=(1000, 1300), smooth=5) -> 
     ----------
     img : numpy.ndarray
         Interferogram, rows x columns.
-    rows : tuple of int
-        Row range ``(y0, y1)`` over which the difference is averaged.
-    search : tuple of int
-        Column range ``(x0, x1)`` searched for the edge.
+    rows : tuple of int, optional
+        Row range ``(y0, y1)`` over which the difference is averaged; the middle half of
+        the image if omitted.
+    search : tuple of int, optional
+        Column range ``(x0, x1)`` searched for the edge; the whole width if omitted.
+        Restrict it when other features (the far edge of the platen strip, the beam
+        border) produce larger jumps than the block edge.
     smooth : int
         Width of the moving average applied to the difference profile, px.
 
@@ -143,14 +152,15 @@ def detect_edge_column(img, rows=(600, 1600), search=(1000, 1300), smooth=5) -> 
     int
         Edge column: the boundary between the two columns of the largest jump.
     """
-    y0, y1 = rows
-    xa, xb = search
-    jump = np.abs(np.diff(np.asarray(img, dtype=float)[y0:y1, xa:xb], axis=1)).mean(axis=0)
+    img = np.asarray(img, dtype=float)
+    y0, y1 = _middle_half(img.shape[0]) if rows is None else rows
+    xa, xb = (0, img.shape[1]) if search is None else search
+    jump = np.abs(np.diff(img[y0:y1, xa:xb], axis=1)).mean(axis=0)
     jump = np.convolve(jump, np.ones(smooth) / smooth, mode="same")
     return xa + int(np.argmax(jump)) + 1
 
 
-def edge_line_centre(img, approx, rows=(600, 1600), half=15) -> float:
+def edge_line_centre(img, approx, rows=None, half=15) -> float:
     """Sub-pixel centre of the dark line that the block edge draws near ``approx``.
 
     The edge (chamfer and step) images as a dark band some 10 px wide. Its darkest
@@ -164,8 +174,9 @@ def edge_line_centre(img, approx, rows=(600, 1600), half=15) -> float:
         Interferogram, rows x columns.
     approx : int
         Approximate edge column (for instance from :func:`detect_edge_column`).
-    rows : tuple of int
-        Row range ``(y0, y1)`` over which the column means are taken.
+    rows : tuple of int, optional
+        Row range ``(y0, y1)`` over which the column means are taken; the middle half of
+        the image if omitted.
     half : int
         Half-width of the search window around ``approx``, px.
 
@@ -174,23 +185,13 @@ def edge_line_centre(img, approx, rows=(600, 1600), half=15) -> float:
     float
         Edge column, px.
     """
-    y0, y1 = rows
-    means = np.convolve(np.asarray(img, dtype=float)[y0:y1].mean(axis=0), np.ones(3) / 3, mode="same")
+    img = np.asarray(img, dtype=float)
+    y0, y1 = _middle_half(img.shape[0]) if rows is None else rows
+    means = np.convolve(img[y0:y1].mean(axis=0), np.ones(3) / 3, mode="same")
     seg = means[approx - half:approx + half + 1]
     i = int(np.argmin(seg))
-    delta = 0.0
-    if 0 < i < len(seg) - 1:
-        curvature = seg[i - 1] - 2 * seg[i] + seg[i + 1]
-        if curvature > 0:
-            delta = 0.5 * (seg[i - 1] - seg[i + 1]) / curvature
+    delta = parabolic_vertex(*seg[i - 1:i + 2]) if 0 < i < len(seg) - 1 else 0.0
     return float(approx - half + i + delta)
-
-
-def _linear_seed(profile, y, frequency):
-    # At a fixed frequency the sinusoid is linear in A*cos(phi), A*sin(phi) and C.
-    design = np.column_stack([np.sin(frequency * y), np.cos(frequency * y), np.ones_like(y)])
-    (a, b, c), *_ = np.linalg.lstsq(design, profile, rcond=None)
-    return [float(np.hypot(a, b)), float(frequency), float(np.arctan2(b, a)), float(c)]
 
 
 def fit_column_band(profile, y, period_guess):
@@ -217,7 +218,7 @@ def fit_column_band(profile, y, period_guess):
     profile = np.asarray(profile, dtype=float)
     try:
         params, cov = curve_fit(interference_model, y, profile,
-                                p0=_linear_seed(profile, y, 2 * np.pi / period_guess), maxfev=5000)
+                                p0=sine_seed(profile, y, 2 * np.pi / period_guess), maxfev=5000)
     except RuntimeError:
         return np.nan, np.nan, np.nan, np.nan
     quality = fit_quality(y, profile, params, cov)

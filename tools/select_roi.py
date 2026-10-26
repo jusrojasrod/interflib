@@ -17,7 +17,7 @@ if complete_path.exists():
         print("Error: The file was found, but OpenCV could not decode it as an image.")
 else:
     print(f"Error: File not found at path: {complete_path}")
-    
+
 # 2. Definir un tamaño máximo para tu pantalla (ej. 1000 píxeles de ancho)
 ancho_maximo = 1000
 escala = 1.0
@@ -51,5 +51,5 @@ else:
     print("\n--- TUS COORDENADAS PARA LA IMAGEN ORIGINAL ---")
     print(f"y1:y2 -> {y}:{y+h}")
     print(f"x1:x2 -> {x}:{x+w}")
-    print(f"Código exacto para copiar en tu otro programa:")
+    print("Código exacto para copiar en tu otro programa:")
     print(f"roi = img[{y}:{y+h}, {x}:{x+w}]")

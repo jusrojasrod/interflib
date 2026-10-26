@@ -2,7 +2,7 @@ import pytest
 from interflib.dimensional.mefm import MonochromaticEFMSolver
 
 class TestMonochromaticEFMSolver:
-    
+
     @pytest.fixture
     def solver(self):
         return MonochromaticEFMSolver(wavelength=632.9912)
@@ -15,7 +15,7 @@ class TestMonochromaticEFMSolver:
             uncertainty=36.0,              # +/- 36 nm uncertainty
             measured_fraction=0.573        # Optical fraction
         )
-        
+
         assert "real_length_nm" in result
         assert "c_difference_nm" in result
         # The accepted c value must be within the uncertainty bounds
@@ -33,13 +33,13 @@ class TestMonochromaticEFMSolver:
 
     def test_convergence_failure(self, solver):
         """Ensures the solver identifies when no optical solution fits the mechanical bounds."""
-        # Using a very small uncertainty and a fraction that is physically impossible 
+        # Using a very small uncertainty and a fraction that is physically impossible
         # to reconcile with the mechanical offset.
         with pytest.raises(RuntimeError, match="Convergence failure"):
             solver.evaluate_block(
-                nominal_length=10e6, 
-                delta_nominal_length=0.0, 
-                uncertainty=5.0, 
+                nominal_length=10e6,
+                delta_nominal_length=0.0,
+                uncertainty=5.0,
                 measured_fraction=0.9 # This will likely be outside +/- 5nm of nominal
             )
 

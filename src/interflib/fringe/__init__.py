@@ -1,16 +1,18 @@
 """L2 - fringe pattern and phase analysis.
 
-Scope: phase-shifting algorithms, phase unwrapping, Zernike polynomial fitting and
-surface topography.
+Scope: from a fringe image (or a phase-stepped stack) to the block-platen fringe fraction,
+the phase map and the block-platen wedge.
 
 Present:
 
-- ``models``         interference model and curve-fit quality metrics
+- ``models``         interference model, sine-fit seed and branch, fit quality, the
+                     ``order_sign`` convention of the fraction
 - ``profile_fit``    1D fringe-profile extraction, sinusoidal fit, fringe fraction
-                     (single-shot, ported from the Excess_fractions prototype)
+                     between two strips (single shot)
 - ``phase_shifting`` phase stepping (PSI): wrapped-phase recovery from an N-frame stack
                      (general least-squares plus 3/4-step and Schwider-Hariharan
-                     estimators), and the block-vs-platen fringe fraction from a phase map
+                     estimators), and the block-vs-platen fringe fraction from a phase map,
+                     compared at the edge column or between strips
 - ``unwrap``         2-D phase unwrapping: Itoh baseline, quality-guided flood fill and
                      the Goldstein branch-cut method (residue detection + branch cuts)
 - ``edge_comparison`` single-shot fringe fraction with block and platen phases compared

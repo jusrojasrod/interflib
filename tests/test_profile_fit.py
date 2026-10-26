@@ -116,3 +116,14 @@ def test_signed_fraction_reverses_the_order_and_validates_the_sign():
     assert signed_fraction(2 * np.pi * 1.3) == pytest.approx(0.3)
     with pytest.raises(ValueError, match="order_sign"):
         signed_fraction(1.0, order_sign=0)
+
+
+def test_period_is_estimated_when_omitted():
+    """Without pixels_between_fringes the starting period comes from the platen spectrum,
+    and the fraction matches the run with the period given."""
+    y = np.arange(500) - 250.0
+    platen = 1 + 0.8 * np.sin(2 * np.pi / 37.6 * y + 0.3)
+    block = 1 + 0.8 * np.sin(2 * np.pi / 36.4 * y + 2.0)
+    _, given = _measure_profiles(platen, block, 37.6, centre_offset=250)
+    _, estimated = _measure_profiles(platen, block, None, centre_offset=250)
+    assert abs((estimated.fringe_fraction - given.fringe_fraction + 0.5) % 1.0 - 0.5) < 1e-9

@@ -37,15 +37,8 @@ from typing import Sequence
 
 import numpy as np
 
-
-def _fractional_part(x):
-    """Positive fractional part of ``x``."""
-    return x - np.floor(x)
-
-
-def _circular_distance(a, b):
-    """Shortest distance between two fringe fractions on the unit circle, in [0, 0.5]."""
-    return np.abs(_fractional_part(a - b + 0.5) - 0.5)
+from ._fractions import circular_distance as _circular_distance
+from ._fractions import fractional_part as _fractional_part
 
 
 @dataclass
@@ -158,7 +151,7 @@ class CoincidenceEFSolver:
 
         residual = self._worst_residual(length, fractions)
         integer_orders = [int(round(2.0 * length / lam - frac))
-                          for lam, frac in zip(self.wavelengths, fractions)]
+                          for lam, frac in zip(self.wavelengths, fractions, strict=True)]
         combs = [self._comb_lengths(i, fractions[i], low, high).tolist()
                  for i in range(self.wavelengths.size)]
 

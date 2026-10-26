@@ -206,7 +206,6 @@ def _place_branch_cuts(residues, height, width) -> np.ndarray:
     cuts = np.zeros((height, width), dtype=bool)
     charged = [(int(i), int(j), int(residues[i, j]))
                for i, j in np.argwhere(residues != 0)]
-    charge = {(i, j): q for i, j, q in charged}
     balanced = set()
 
     for start_i, start_j, start_q in charged:

@@ -15,8 +15,9 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import curve_fit
 
+from interflib.fringe.fourier import estimate_carrier
 from interflib.fringe.models import (FitQuality, canonical_sinusoid, fit_quality,
-                                     interference_model, signed_fraction)
+                                     interference_model, signed_fraction, sine_seed)
 
 
 @dataclass
@@ -78,21 +79,14 @@ class FringeFractionMeasurement:
     def _initial_parameter_guess(profile, x, frequency: float):
         """Seed ``(A, w, phi, C)`` for the non-linear fit at a given frequency.
 
-        At a fixed frequency the model ``A*sin(w*x + phi) + C`` is linear in
-        ``A*cos(phi)``, ``A*sin(phi)`` and ``C``, so a linear least-squares solve gives
-        the amplitude, phase and offset that best match the profile at that frequency
-        (the classical three-parameter, known-frequency sine fit of IEEE Std 1057).
-
         A fixed phase seed is not enough: when the seed frequency is slightly off (the
         block is seeded at the platen frequency, and a wedge between block and platen
         makes their periods differ) and the true phase lies about a quarter period from
         the seed, the optimiser can trade phase for frequency and converge to a
-        spurious sinusoid. Seeding the phase from the data avoids that start.
+        spurious sinusoid. The seed is the linear known-frequency solve of
+        :func:`interflib.fringe.models.sine_seed`.
         """
-        x = np.asarray(x, dtype=float)
-        design = np.column_stack([np.sin(frequency * x), np.cos(frequency * x), np.ones_like(x)])
-        (a, b, c), *_ = np.linalg.lstsq(design, np.asarray(profile, dtype=float), rcond=None)
-        return [float(np.hypot(a, b)), float(frequency), float(np.arctan2(b, a)), float(c)]
+        return sine_seed(profile, x, frequency)
 
     @staticmethod
     def _canonicalize(params: np.ndarray) -> np.ndarray:
@@ -108,16 +102,28 @@ class FringeFractionMeasurement:
         A, w, phi = canonical_sinusoid(*params[:3])
         return np.array([A, w, phi, params[3]])
 
-    def fit(self, pixels_between_fringes: float = 175.0, max_iterations: int = 5000):
+    def fit(self, pixels_between_fringes: float = None, max_iterations: int = 5000):
         """Fit both profiles and store the fit quality.
 
         The block fit is seeded at the platen's fitted frequency but its frequency stays
         free, so a period difference between block and platen (a wedge) is preserved.
 
+        Parameters
+        ----------
+        pixels_between_fringes : float, optional
+            Starting fringe period along the profile, px. If omitted it is estimated
+            from the power spectrum of the platen profile
+            (:func:`interflib.fringe.fourier.estimate_carrier`), which needs at least four
+            fringes in the profile.
+        max_iterations : int
+            Maximum number of function evaluations of each non-linear fit.
+
         Returns ``self`` so calls can be chained.
         """
         if self.platen_profile is None:
             self.get_fringe_profiles()
+        if pixels_between_fringes is None:
+            pixels_between_fringes = 1.0 / estimate_carrier(self.platen_profile[:, None])
 
         p0_platen = self._initial_parameter_guess(self.platen_profile, self.pixel_indices,
                                                   2 * np.pi / pixels_between_fringes)
@@ -151,9 +157,12 @@ class FringeFractionMeasurement:
         self.fringe_fraction = signed_fraction(self.block_phase - self.platen_phase, self.order_sign)
         return self.fringe_fraction
 
-    def measure(self, pixels_between_fringes: float = 175.0,
+    def measure(self, pixels_between_fringes: float = None,
                 max_iterations: int = 5000) -> FringeFractionResult:
-        """Fit and compute the fraction in one call, returning a result object."""
+        """Fit and compute the fraction in one call, returning a result object.
+
+        ``pixels_between_fringes`` is the starting period, estimated if omitted (see :meth:`fit`).
+        """
         self.fit(pixels_between_fringes, max_iterations)
         self.calculate_fraction()
         return FringeFractionResult(
@@ -183,16 +192,3 @@ class FringeFractionMeasurement:
         ax.legend()
         return ax
 
-
-if __name__ == "__main__":
-    from pathlib import Path
-    from interflib.io.images import load_image
-
-    images = Path(__file__).resolve().parents[3] / "simulations" / "interferograms"
-    img = load_image(images / "block_100.0_mm-WL_543.5-(simulated).png")
-
-    measurement = FringeFractionMeasurement(img, (700, 1900, 500, 900), (700, 1900, 1000, 1400))
-    result = measurement.measure()
-    print(f"fringe fraction : {result.fringe_fraction:.4f}")
-    print(f"platen fit R^2  : {result.platen_quality.r2:.4f}")
-    print(f"block  fit R^2  : {result.block_quality.r2:.4f}")

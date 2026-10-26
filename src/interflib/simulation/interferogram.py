@@ -35,7 +35,7 @@ correction once it is quantified for the INM materials.
 This module has no I/O side effects: it returns arrays. Saving to disk belongs to a tool
 or notebook, not the library.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.ndimage import gaussian_filter

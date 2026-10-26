@@ -37,19 +37,8 @@ from typing import Sequence
 
 import numpy as np
 
-
-def _fractional_part(x):
-    """Positive fractional part of ``x`` (matches Liu's INT() = floor for x > 0)."""
-    return x - np.floor(x)
-
-
-def _circular_distance(a, b):
-    """Shortest distance between two fringe fractions on the unit circle, in [0, 0.5].
-
-    Fringe fractions live on a circle: 0.99 and 0.01 are 0.02 apart, not 0.98. This
-    wraps the difference into [-0.5, 0.5) and returns its magnitude.
-    """
-    return np.abs(_fractional_part(a - b + 0.5) - 0.5)
+from ._fractions import circular_distance as _circular_distance
+from ._fractions import fractional_part as _fractional_part
 
 
 @dataclass
@@ -167,7 +156,7 @@ class MultiwavelengthEFSolver:
                   if len(candidates) > 1 else math.inf)
 
         integer_orders = [int(round(2.0 * best.length / lam - frac))
-                          for lam, frac in zip(self.wavelengths, fractions)]
+                          for lam, frac in zip(self.wavelengths, fractions, strict=True)]
 
         return ExcessFractionSolution(
             length=best.length,

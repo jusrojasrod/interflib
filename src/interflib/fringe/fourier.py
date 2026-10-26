@@ -53,6 +53,7 @@ from .edge_comparison import (
     fraction_at_edge,
     side_band_centres,
 )
+from .models import parabolic_vertex
 from .unwrap import unwrap_goldstein, unwrap_itoh, unwrap_quality_guided
 
 
@@ -127,8 +128,7 @@ def estimate_carrier(profiles, min_cycles=4.0):
     k = 1 + int(np.argmax(power[1:]))
     if freqs[k] < min_cycles / n or k >= len(power) - 1:
         raise ValueError("no carrier above %.1f fringes over %d rows" % (min_cycles, n))
-    la, lb, lc = np.log(power[k - 1:k + 2] + 1e-300)
-    delta = 0.5 * (la - lc) / (la - 2 * lb + lc)
+    delta = parabolic_vertex(*np.log(power[k - 1:k + 2] + 1e-300))
     return float((k + delta) * (freqs[1] - freqs[0]))
 
 
@@ -398,8 +398,7 @@ def _region(img, rows, cols):
 
 
 def _parabolic_offset(values):
-    la, lb, lc = np.log(np.asarray(values) + 1e-300)
-    return 0.5 * (la - lc) / (la - 2 * lb + lc)
+    return parabolic_vertex(*np.log(np.asarray(values) + 1e-300))
 
 
 def estimate_carrier_2d(region, min_cycles=4.0):
@@ -702,6 +701,6 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     # wedge makes the two differ.
     maps = [demodulate_2d(img, fft_rows, c, carrier, bandwidth, taper, min_cycles) for c in (cols_platen, cols_block)]
     platen, block = [map_column_phases(m, img, xs, rows, eval_row, half_width, deg_y, bandwidth)
-                     for m, xs in zip(maps, (xs_platen, xs_block))]
+                     for m, xs in zip(maps, (xs_platen, xs_block), strict=True)]
     result = fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
     return replace(result, fraction_error=float("nan"))

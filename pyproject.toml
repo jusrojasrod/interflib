@@ -15,12 +15,11 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "opencv-python>=4.8",
-    "pandas>=2.0",
-    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "nbstripout>=0.6"]
+dev = ["pytest>=7.4", "nbstripout>=0.6", "ruff>=0.5"]
+notebooks = ["scikit-image>=0.21"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -29,3 +28,10 @@ include = ["interflib*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Errors and likely bugs; long lines and spacing style are not enforced.
+select = ["F", "B", "E9", "E70", "W291", "W292", "W293"]

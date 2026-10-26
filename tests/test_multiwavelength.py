@@ -17,7 +17,6 @@ wavelengths: only one length reproduces every measured fraction at once. Here th
 1399.8409 um (all three selecting residuals below 0.07 fringe). The l1 & l2 pair also
 lands there and matches Liu's Table II value exactly, so it is asserted directly.
 """
-import math
 
 import numpy as np
 import pytest
@@ -74,7 +73,7 @@ def test_recovers_synthetic_length_exactly():
 
     assert solution.length == pytest.approx(true_length, abs=1e-6)
     expected_orders = [int(round(2.0 * true_length / lam - f))
-                       for lam, f in zip(wavelengths, fractions)]
+                       for lam, f in zip(wavelengths, fractions, strict=True)]
     assert solution.integer_orders == expected_orders
     assert solution.residual == pytest.approx(0.0, abs=1e-9)
 

@@ -10,6 +10,34 @@ def interference_model(x, A, w, phi, C):
     return A * np.sin(w * x + phi) + C
 
 
+def sine_seed(profile, x, frequency):
+    """Seed ``[A, w, phi, C]`` for fitting ``A*sin(w*x + phi) + C`` at a known frequency.
+
+    At a fixed angular frequency ``w`` the model is linear in ``A*cos(phi)``,
+    ``A*sin(phi)`` and ``C``, so a linear least-squares solve gives the amplitude, phase
+    and offset that best match the profile at that frequency (the three-parameter
+    known-frequency sine fit of IEEE Std 1057). Seeding the phase from the data, instead
+    of a fixed value, keeps the non-linear fit from trading phase for frequency.
+    """
+    x = np.asarray(x, dtype=float)
+    design = np.column_stack([np.sin(frequency * x), np.cos(frequency * x), np.ones_like(x)])
+    (a, b, c), *_ = np.linalg.lstsq(design, np.asarray(profile, dtype=float), rcond=None)
+    return [float(np.hypot(a, b)), float(frequency), float(np.arctan2(b, a)), float(c)]
+
+
+def parabolic_vertex(left, centre, right) -> float:
+    """Offset, in samples, of the vertex of the parabola through three equally spaced samples.
+
+    The offset is measured from the centre sample (``|offset| <= 0.5`` when the centre is
+    the extreme of the three); it is 0 when the samples are collinear or not finite. Pass
+    logarithms to refine a Gaussian-like spectral peak.
+    """
+    curvature = left - 2 * centre + right
+    if not np.isfinite(curvature) or curvature == 0:
+        return 0.0
+    return float(0.5 * (left - right) / curvature)
+
+
 def canonical_sinusoid(A, w, phi):
     """Fold ``A*sin(w*x + phi)`` onto the branch ``A >= 0``, ``w > 0``; returns ``(A, w, phi)``.
 

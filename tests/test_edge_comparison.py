@@ -166,3 +166,12 @@ def test_fraction_error_matches_the_scatter_over_noise():
     scatter = np.std([((r.fraction - 0.3) + 0.5) % 1.0 - 0.5 for r in runs], ddof=1)
     reported = np.mean([r.fraction_error for r in runs])
     assert 0.6 < reported / scatter < 1.5
+
+
+def test_edge_detection_defaults_to_the_whole_image():
+    """Without rows and search the edge is searched over the middle half of the rows and
+    the whole width."""
+    img = _scene(0.3)
+    approx = detect_edge_column(img)
+    assert abs(approx - EDGE_X) <= 6
+    assert abs(edge_line_centre(img, approx) - (EDGE_X - 0.5)) < 0.3

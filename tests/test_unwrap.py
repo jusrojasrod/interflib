@@ -1,6 +1,5 @@
 """Tests for 2-D phase unwrapping (Itoh, quality-guided, Goldstein branch-cut)."""
 import numpy as np
-import pytest
 
 from interflib.fringe.unwrap import (
     find_residues,
@@ -100,8 +99,10 @@ def test_quality_guided_unwraps_disconnected_regions_independently():
 
     recovered = unwrap_quality_guided(wrapped, mask=mask)
 
-    left = mask.copy(); left[:, 40:] = False
-    right = mask.copy(); right[:, :40] = False
+    left = mask.copy()
+    left[:, 40:] = False
+    right = mask.copy()
+    right[:, :40] = False
     # Each region is recovered up to its own piston; the 100-rad step is not bridged.
     assert np.nanstd(_demean_masked(recovered - truth, left)) < 1e-9
     assert np.nanstd(_demean_masked(recovered - truth, right)) < 1e-9

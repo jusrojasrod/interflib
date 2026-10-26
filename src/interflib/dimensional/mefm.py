@@ -1,48 +1,58 @@
-"""Monochromatic (single-wavelength) excess fraction method solver.
+"""Monochromatic (single-wavelength) excess fraction method solver (MEFM).
+
+One wavelength gives only the fringe fraction; the integer order is resolved with a
+prior mechanical measurement of the deviation from nominal. The candidate deviations
+``c = (lambda / 2) (m + F - F')`` are spaced ``lambda / 2`` apart, so exactly one falls in
+the acceptance interval ``delta +- U`` when ``U < lambda / 4``. Reference: J. S.
+Rojas-Rodriguez, J. L. Galvis Arroyave and H. Vinck-Posada, "Absolute Gauge Block
+Calibration: A Single-Wavelength Excess Fraction Method Assisted by High-Precision
+Mechanical Pre-measurement", preprint, INM (2026), sec. III.C (uniqueness condition).
 """
 import numpy as np
 
 
 class MonochromaticEFMSolver:
-    """
-    Solver for the Monochromatic Excess Fraction Method (MEFM).
-    Calculates the absolute length of gauge blocks by resolving 
-    fringe order ambiguity using mechanical preconditioning.
+    """Absolute gauge-block length from one wavelength and a mechanical prior.
+
+    Parameters
+    ----------
+    wavelength : float
+        Laser wavelength in air (the medium of the measurement), nanometres.
     """
 
     def __init__(self, wavelength: float):
-        """
-        Parameters
-        ----------
-        wavelength: float 
-            Laser wavelength in air (the medium of the measurement), in nanometers (nm).
-        """
         self.wavelength = wavelength
         self.lambda_over_4 = wavelength / 4.0
         self.lambda_over_2 = wavelength / 2.0
 
-    def evaluate_block(self, nominal_length: float, delta_nominal_length: float, 
+    def evaluate_block(self, nominal_length: float, delta_nominal_length: float,
                        uncertainty: float, measured_fraction: float) -> dict:
-        """
-        Evaluates an individual gauge block and returns its real absolute length.
+        """Absolute length of one gauge block.
 
         Parameters
         ----------
-        nominal_length: float
-            Nominal length of the block (e.g., 10e6 nm).
-        delta_nominal_length: float
-            Mechanical deviation (L'_error) in nm.
-        uncertainty: float
-            Expanded uncertainty of the prior mechanical measurement in nm.
-        measured_fraction: float
-            Measured optical excess fraction [0, 1).
+        nominal_length : float
+            Nominal length of the block, nm (e.g. ``10e6`` for 10 mm).
+        delta_nominal_length : float
+            Deviation from nominal measured mechanically, nm.
+        uncertainty : float
+            Expanded uncertainty of that mechanical deviation, nm.
+        measured_fraction : float
+            Measured fringe fraction, in ``[0, 1)``.
 
-        Returns:
-        dict: Detailed results of the absolute calibration.
-        
-        Raises:
-        ValueError: If mechanical uncertainty exceeds the lambda/4 uniqueness limit.
-        RuntimeError: If zero or multiple valid optical solutions are found.
+        Returns
+        -------
+        dict
+            ``real_length_nm`` (absolute length), ``c_difference_nm`` (accepted deviation
+            from nominal), ``fractional_prime`` (fraction ``F'`` of the nominal length) and
+            ``acceptance_interval`` (``delta +- U``), all in nm except ``F'``.
+
+        Raises
+        ------
+        ValueError
+            If the uncertainty reaches the uniqueness limit ``lambda / 4``.
+        RuntimeError
+            If no candidate, or more than one, falls in the acceptance interval.
         """
         if uncertainty >= self.lambda_over_4:
             raise ValueError(
@@ -63,8 +73,6 @@ class MonochromaticEFMSolver:
         valid_c = [c for c in c_values if lower_bound <= c <= upper_bound]
 
         if len(valid_c) == 0:
-            # print(f"c_difference_nm: {c_values} - Bounds ({lower_bound}, {upper_bound})" )
-            # return 0
             closest_c, min_error = self._run_diagnostics(c_values, delta_nominal_length)
             missed_by = min_error - uncertainty
             raise RuntimeError(
@@ -85,19 +93,19 @@ class MonochromaticEFMSolver:
             "fractional_prime": fractional_prime,
             "acceptance_interval": (lower_bound, upper_bound)
         }
-        
+
     def _run_diagnostics(self, c_values: np.ndarray, delta_nominal_length: float) -> tuple:
         """
-        Analyzes the deviation between the calculated optical differences 
+        Analyzes the deviation between the calculated optical differences
         and the mechanical deviation when convergence fails.
-        
+
         Parameters
         ----------
         c_values: np.ndarray
             Array of calculated optical length differences in nm.
         delta_nominal_length: float
             Mechanical deviation in nm.
-            
+
         Returns
         -------
         tuple
@@ -105,10 +113,10 @@ class MonochromaticEFMSolver:
         """
         differences = np.abs(c_values - delta_nominal_length)
         min_index = np.argmin(differences)
-        
+
         closest_c = c_values[min_index]
         min_error = differences[min_index]
-        
+
         return closest_c, min_error
 
 
@@ -118,12 +126,12 @@ if __name__ == "__main__":
     # Evaluate the 10 mm block with the mechanical and optical data
     try:
         result = he_ne_laser.evaluate_block(
-            nominal_length=10e6,           
-            delta_nominal_length=-150.0,   
-            uncertainty=36.0,              
-            measured_fraction=0.573        
+            nominal_length=10e6,
+            delta_nominal_length=-150.0,
+            uncertainty=36.0,
+            measured_fraction=0.573
         )
-        
+
         print("Calibration Results:")
         print("-" * 20)
         print(f"Real Length:        {result['real_length_nm']:.3f} nm")
