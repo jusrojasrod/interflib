@@ -137,7 +137,7 @@ class SensorModel:
 class SyntheticInterferogram:
     """Result of one synthesis, with the ground truth attached."""
 
-    image: np.ndarray            # digital counts, shape (N, N), integer dtype
+    image: np.ndarray            # digital counts, shape (height, width), integer dtype
     irradiance: np.ndarray       # continuous irradiance before the sensor, float
     phase: np.ndarray            # wrapped optical phase, radians in [-pi, pi]
     opd_nm: np.ndarray           # optical-path-difference map, nanometres
@@ -198,6 +198,14 @@ def _block_mask(geom: SceneGeometry, Xn, Yn):
 
     return (np.abs(x_rot) <= geom.block_width_mm / 2.0) & \
            (np.abs(y_rot) <= geom.block_height_mm / 2.0)
+
+
+def _block_centre_normalised(geom: SceneGeometry):
+    """Block centre ``(x, y)`` in the per-axis normalised coordinates ``Xn, Yn``."""
+    height, width = _pixel_dims(geom)
+    half_x = geom.fov_mm / 2.0
+    half_y = geom.fov_mm * _pixel_aspect(height, width) / 2.0
+    return geom.block_center_mm[0] / half_x, geom.block_center_mm[1] / half_y
 
 
 def _tilt_height_nm(X, Y, fringes_x, fringes_y, wavelength_nm):
@@ -330,10 +338,16 @@ def synthesize_interferogram(
     height_nm = _tilt_height_nm(Xn, Yn, phase.fringes_x, phase.fringes_y, lam)
     height_nm = height_nm + _low_order_flatness_nm(Xr, Yr, phase.platen_flatness_pv_nm)
 
+    # The central length is defined at the block centre, so the block-only terms (wringing
+    # tilt, face flatness) are centred on it and vanish there: the step at the block centre
+    # is exactly frac(2 L / lambda), wherever the block sits in the frame.
+    xc, yc = _block_centre_normalised(geometry)
+    aspect = _pixel_aspect(*_pixel_dims(geometry))
     block_extra_nm = (
-        _tilt_height_nm(Xn, Yn, phase.block_tilt_mismatch_x,
+        _tilt_height_nm(Xn - xc, Yn - yc, phase.block_tilt_mismatch_x,
                         phase.block_tilt_mismatch_y, lam)
-        + _low_order_flatness_nm(Xr, Yr, phase.block_flatness_pv_nm)
+        + _low_order_flatness_nm(Xr - xc, Yr - yc * aspect, phase.block_flatness_pv_nm)
+        + 0.5 * phase.block_flatness_pv_nm     # lift the bowl to zero at the centre
     )
     height_nm = np.where(mask, height_nm + block_extra_nm, height_nm)
 

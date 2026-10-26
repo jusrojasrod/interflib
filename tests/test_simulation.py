@@ -153,3 +153,27 @@ def test_block_mask_marks_a_plausible_area():
     coverage = result.block_mask.mean()
     # 9 x 35 mm block in a 25 x 25 mm field: about (9/25)*(25/25) ~ 0.36 of the area.
     assert 0.25 < coverage < 0.45
+
+
+@pytest.mark.parametrize("centre_mm", [(0.0, 0.0), (3.0, -2.0)])
+def test_fraction_truth_is_the_step_at_the_block_centre(centre_mm):
+    """With block flatness and a wringing tilt the block-minus-platen OPD at the block
+    centre still equals frac(2L/lambda): the block-only terms vanish there."""
+    # 0.05 mm pixels on both axes (fov / (width - 1)); the block centre falls on a pixel.
+    lam = 543.5
+    model = PhaseModel(wavelength_nm=lam, central_length_nm=100.0, fringes_y=12.0,
+                       block_flatness_pv_nm=20.0, platen_flatness_pv_nm=30.0,
+                       block_tilt_mismatch_x=0.4, block_tilt_mismatch_y=-0.7,
+                       defocus_nm=40.0)
+    geom = SceneGeometry(resolution=(301, 513), fov_mm=25.6, block_width_mm=9.0,
+                         block_height_mm=10.0, block_center_mm=centre_mm)
+    bare = SceneGeometry(resolution=(301, 513), fov_mm=25.6, block_center_mm=(1e3, 1e3))
+    sim = synthesize_interferogram(geom, model, seed=0)
+    ref = synthesize_interferogram(bare, model, seed=0)
+
+    row = 150 + round(centre_mm[1] / 0.05)
+    col = 256 + round(centre_mm[0] / 0.05)
+    assert sim.block_mask[row, col] and not ref.block_mask.any()
+    step = (sim.opd_nm[row, col] - ref.opd_nm[row, col]) / lam
+    gap = (step - sim.fraction_truth + 0.5) % 1.0 - 0.5
+    assert abs(gap) < 1e-9
