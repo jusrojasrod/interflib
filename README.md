@@ -295,11 +295,13 @@ print(f"{classic.length_dev:.1f}")                  # -> 51.0
 Without arguments it measures a simulated 2 mm block and also reports the error against the truth. `--series` reads
 a real burst and its `.meta.yaml` sidecar; this needs the `tools` extra (pyyaml). A value missing from the sidecar,
 such as the pressure, has to be given on the command line: the script stops rather than assume it. `--json` writes
-the same summary to a file.
+the same summary to a file. `--plot` saves a figure of the areas used, so that each series can be checked: the frame,
+a zoom around the edge with the platen and block bands and the Fourier regions, and the band phases with the two
+lines extended to the edge.
 
 ```bash
 python tools/run_calibration.py                                   # simulated block
-python tools/run_calibration.py --series DATA/20261005_L1_tg-inm_2mm_repet-2_serie-010     --pressure 75300 --face-centre-x 1340.5 --pixel-mm 0.0179 --json summary.json
+python tools/run_calibration.py --series DATA/20261005_L1_tg-inm_2mm_repet-2_serie-010     --pressure 75300 --face-centre-x 1340.5 --pixel-mm 0.0179 --json summary.json --plot areas.png
 ```
 
 ```

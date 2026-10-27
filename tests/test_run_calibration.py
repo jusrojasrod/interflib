@@ -52,3 +52,10 @@ def test_missing_pressure_in_a_series_stops_the_run(tmp_path):
         encoding="utf-8")
     with pytest.raises(SystemExit, match="pressure_pa"):
         run_calibration.run(run_calibration.parse_args(["--series", str(series)]))
+
+
+def test_plot_of_the_areas_is_written(tmp_path, capsys):
+    out = tmp_path / "areas.png"
+    run_calibration.main([*SMALL, "--plot", str(out)])
+    assert out.stat().st_size > 10_000
+    assert "figure written to" in capsys.readouterr().out

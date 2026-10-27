@@ -50,7 +50,7 @@ from interflib.dimensional.excess_fraction import GaugeBlockLength  # noqa: E402
 from interflib.dimensional.mefm import MonochromaticEFMSolver  # noqa: E402
 from interflib.dimensional.refraction import EdlenRefractiveIndex  # noqa: E402
 from interflib.fringe.edge_comparison import (detect_edge_column, edge_fraction, edge_line_centre,  # noqa: E402
-                                              side_band_centres)
+                                              side_band_centres, side_fit)
 from interflib.fringe.fourier import (demodulate_columns, estimate_carrier, fourier_edge_fraction,  # noqa: E402
                                       fourier_edge_fraction_2d)
 from interflib.fringe.wedge import measure_wedge  # noqa: E402
@@ -173,16 +173,20 @@ def real_series(args, folder: Path) -> dict:
     frames = [load_image(p).astype(float) for p in files]
     mean = np.mean(frames, axis=0)
     eval_row = args.eval_row if args.eval_row is not None else BENCH_EVAL_ROW
+    search, platen_left = None, None
     if args.edge_x is not None:
         edge_x, origin = args.edge_x, "command line"
     else:
-        search = tuple(args.edge_search) if args.edge_search else _search_from_platen(mean)
+        if args.edge_search:
+            search = tuple(args.edge_search)
+        else:
+            search, platen_left = _search_from_platen(mean)
         step = detect_edge_column(mean, rows=BENCH_EDGE_ROWS, search=search)
         edge_x = edge_line_centre(mean, step, rows=BENCH_EDGE_ROWS)
         origin = f"dark edge line, searched in columns {search[0]}-{search[1]}"
     return {"source": f"series {folder.name}, {len(frames)} frames", "frames": frames, "eval_row": eval_row,
             "edge_x": float(edge_x), "edge_origin": origin, "face_centre_x": args.face_centre_x,
-            "pixel_mm": args.pixel_mm, "truth": None}
+            "pixel_mm": args.pixel_mm, "truth": None, "edge_search": search, "platen_left": platen_left}
 
 
 def _search_from_platen(img):
@@ -191,7 +195,7 @@ def _search_from_platen(img):
     y0, y1 = BENCH_EDGE_ROWS
     contrast = np.convolve(img[y0:y1].std(axis=0), np.ones(9) / 9, "same")
     left = int(np.flatnonzero(contrast > 0.4 * np.percentile(contrast, 95)).min())
-    return left + 150, left + 400
+    return (left + 150, left + 400), left
 
 
 # --------------------------------------------------------------------------------------
@@ -209,7 +213,7 @@ def _wrap(values, reference):
     return reference + (np.asarray(values) - reference + 0.5) % 1.0 - 0.5
 
 
-def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: list) -> dict:
+def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: list, artifacts=None) -> dict:
     frames, eval_row, edge_x = scene["frames"], scene["eval_row"], scene["edge_x"]
     img = np.mean(frames, axis=0)
     height, width = img.shape
@@ -281,6 +285,9 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
         wedge = None
         notes.append(f"wedge: the measurement failed ({exc})")
 
+    if artifacts is not None:
+        artifacts.update(image=img, primary=primary, rows=rows, fft_rows=fft_rows, face_centre_x=x_c,
+                         edge_search=scene.get("edge_search"), platen_left=scene.get("platen_left"))
     return {
         "image": {"source": scene["source"], "size_px": [height, width], "frames": len(frames),
                   "edge_x_px": edge_x, "edge_origin": scene["edge_origin"], "eval_row_px": eval_row,
@@ -306,8 +313,11 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
 # --------------------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------------------
-def run(args) -> dict:
-    """Measure one block and return the summary (also the content of ``--json``)."""
+def run(args, artifacts=None) -> dict:
+    """Measure one block and return the summary (also the content of ``--json``).
+
+    ``artifacts``, if a dict, receives the averaged image and the primary reading for :func:`plot_regions`.
+    """
     notes = []
     folder = Path(args.series) if args.series else None
     inputs = collect_inputs(args, read_sidecar(folder) if folder else None)
@@ -321,7 +331,7 @@ def run(args) -> dict:
     notes += [f"air index: {w.message}" for w in caught]
 
     scene = simulated_scene(args, inputs, wavelength_air) if folder is None else real_series(args, folder)
-    measured = measure(args, scene, inputs, wavelength_air, notes)
+    measured = measure(args, scene, inputs, wavelength_air, notes, artifacts)
     frac = measured["fraction"]
 
     nominal_nm = inputs.value("nominal_mm") * 1e6
@@ -481,6 +491,102 @@ def _jsonable(obj):
     return obj
 
 
+PLATEN_COLOUR, BLOCK_COLOUR, EDGE_COLOUR, FOURIER_COLOUR = "#1f5482", "#c2141b", "#e0a100", "#2a9d3c"
+
+
+def plot_regions(path, summary: dict, data: dict) -> None:
+    """Save a figure of the areas the measurement used.
+
+    (a) the whole frame: platen strip border and edge search range (real series), Fourier
+    rows and the zoomed box; (b) the zoom around the edge: edge, evaluation row, fit window,
+    platen and block bands, the two regions of the 2-D Fourier reader, the columns used for
+    the period and the face centre; (c) the band phases of the primary reader at the
+    evaluation row, with the straight lines of each side extended to the edge.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    img = data["image"]
+    height, width = img.shape
+    x_e, y_e = summary["image"]["edge_x_px"], summary["image"]["eval_row_px"]
+    rows, fft_rows = data["rows"], data["fft_rows"]
+    gap, span, half = 30, 180, 2                      # band layout of the readers (their defaults)
+    lo, hi = np.percentile(img, [1, 99.5])
+    fig = plt.figure(figsize=(16, 5.6))
+    grid = fig.add_gridspec(1, 3, width_ratios=[1.25, 1.1, 1.0], wspace=0.28)
+    ax_frame, ax_zoom, ax_phase = (fig.add_subplot(grid[0, i]) for i in range(3))
+
+    # (a) whole frame
+    ax_frame.imshow(img, cmap="gray", vmin=lo, vmax=hi)
+    ax_frame.axhspan(*fft_rows, color=FOURIER_COLOUR, alpha=0.12, label=f"Fourier rows {fft_rows[0]}-{fft_rows[1]}")
+    if data.get("edge_search"):
+        ax_frame.axvspan(*data["edge_search"], color=EDGE_COLOUR, alpha=0.18, label="edge search range")
+    if data.get("platen_left") is not None:
+        ax_frame.axvline(data["platen_left"], color=PLATEN_COLOUR, ls=":", lw=1.2,
+                         label="left border of the platen strip")
+    ax_frame.axvline(x_e, color=EDGE_COLOUR, lw=1.2, label=f"edge x = {x_e:.1f}")
+    zx = (max(0, int(x_e) - 270), min(width, int(x_e) + 270))
+    zy = (max(0, y_e - 300), min(height, y_e + 300))
+    ax_frame.add_patch(Rectangle((zx[0], zy[0]), zx[1] - zx[0], zy[1] - zy[0], fill=False, ec="w", lw=1.2, ls="--"))
+    ax_frame.set_title("(a) frame\nwhite box: zoom in (b)")
+    ax_frame.legend(fontsize=7, loc="lower left", framealpha=0.85)
+
+    # (b) zoom around the edge
+    crop = img[zy[0]:zy[1], zx[0]:zx[1]]
+    ax_zoom.imshow(crop, cmap="gray", vmin=lo, vmax=hi, extent=(zx[0], zx[1], zy[1], zy[0]), aspect="auto")
+    for x0, x1, colour, name in ((x_e - span - half, x_e - gap + half, PLATEN_COLOUR, "platen bands"),
+                                 (x_e + gap - half, x_e + span + half, BLOCK_COLOUR, "block bands")):
+        ax_zoom.add_patch(Rectangle((x0, rows[0]), x1 - x0, rows[1] - rows[0], fill=False, ec=colour, lw=1.8,
+                                    label=f"{name} ({x0:.0f}-{x1:.0f})"))
+    regions_2d = ((math.floor(x_e - span - 20) - half, math.floor(x_e - 12)),
+                  (math.ceil(x_e + 12), math.ceil(x_e + span + 20) + half + 1))
+    for (x0, x1), colour in zip(regions_2d, (PLATEN_COLOUR, BLOCK_COLOUR), strict=True):
+        ax_zoom.add_patch(Rectangle((x0, fft_rows[0]), x1 - x0, fft_rows[1] - fft_rows[0], fill=False, ec=colour,
+                                    lw=1.0, ls="--"))
+    ax_zoom.plot([], [], color="0.4", ls="--", lw=1.0, label="2-D Fourier regions")
+    ax_zoom.add_patch(Rectangle((x_e - 100, fft_rows[0]), 60, fft_rows[1] - fft_rows[0], fill=True,
+                                fc=FOURIER_COLOUR, alpha=0.25, ec="none", label="columns for the period"))
+    ax_zoom.axvline(x_e, color=EDGE_COLOUR, lw=1.2, label="edge")
+    ax_zoom.axhline(y_e, color="w", lw=0.8, ls=":", label=f"evaluation row {y_e}")
+    if data.get("face_centre_x") is not None:
+        ax_zoom.axvline(data["face_centre_x"], color="w", lw=1.0, ls="-.",
+                        label=f"face centre x = {data['face_centre_x']:.1f}")
+    ax_zoom.set_xlim(*zx)
+    ax_zoom.set_ylim(zy[1], zy[0])
+    ax_zoom.set_title(f"(b) areas around the edge\nfit window rows {rows[0]}-{rows[1]}")
+    ax_zoom.legend(fontsize=7, loc="lower left", framealpha=0.85)
+
+    # (c) band phases of the primary reader
+    primary = data["primary"]
+    platen_line = side_fit(primary.platen, (x_e - span, x_e - gap))
+    block_line = side_fit(primary.block, (x_e + gap, x_e + span))
+    ref = np.polyval(platen_line, x_e)
+    shift = 2 * np.pi * np.floor((np.polyval(block_line, x_e) - ref) / (2 * np.pi))
+    for cols, line, colour, name, offset in ((primary.platen, platen_line, PLATEN_COLOUR, "platen", 0.0),
+                                             (primary.block, block_line, BLOCK_COLOUR, "block", shift)):
+        good = np.isfinite(cols.phase_unwrapped) & (cols.r2 >= 0.3)
+        ax_phase.plot(cols.x[good], (cols.phase_unwrapped[good] - offset - ref) / (2 * np.pi), "o", ms=3,
+                      color=colour, label=f"{name} bands")
+        ax_phase.plot(cols.x[~good], (cols.phase_unwrapped[~good] - offset - ref) / (2 * np.pi), "x", ms=4,
+                      color=colour, alpha=0.5)
+        xs = np.array([min(cols.x.min(), x_e), max(cols.x.max(), x_e)])
+        ax_phase.plot(xs, (np.polyval(line, xs) - offset - ref) / (2 * np.pi), "-", color=colour, lw=1)
+    ax_phase.axvline(x_e, color=EDGE_COLOUR, lw=1.2)
+    frac = summary["fraction"]
+    ax_phase.set_title(f"(c) {frac['primary_method']} band phases at row {y_e}\n"
+                       f"F at the edge = {frac['edge_fraction']:.4f}")
+    ax_phase.set_xlabel("column x (px)")
+    ax_phase.set_ylabel("phase relative to the platen at the edge (fringes)")
+    ax_phase.legend(fontsize=7)
+    for ax in (ax_frame, ax_zoom):
+        ax.set_xlabel("column x (px)")
+        ax.set_ylabel("row y (px)")
+    fig.savefig(path, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="End-to-end gauge-block measurement with a summary report.")
     ap.add_argument("--series", help="folder of one burst of frames, with its <folder>.meta.yaml sidecar")
@@ -502,6 +608,7 @@ def parse_args(argv=None):
     ap.add_argument("--prior-U-nm", type=float, help="expanded uncertainty of that prior, nm")
     ap.add_argument("--bit-depth", type=int, default=12, help="sensor bit depth, for saturation (default 12)")
     ap.add_argument("--json", metavar="PATH", help="write the summary to PATH")
+    ap.add_argument("--plot", metavar="PATH", help="save a figure of the areas used (frame, edge zoom, band phases)")
     sim = ap.add_argument_group("simulated scene (when --series is not given)")
     sim.add_argument("--true-dev-nm", type=float, default=51.0, help="true deviation from nominal, nm")
     sim.add_argument("--scale", type=float, default=0.5, help="frame scale of the 2448 x 2048 sensor")
@@ -512,11 +619,15 @@ def parse_args(argv=None):
 
 def main(argv=None) -> dict:
     args = parse_args(argv)
-    summary = run(args)
+    artifacts = {} if args.plot else None
+    summary = run(args, artifacts)
     print(format_summary(summary))
     if args.json:
         Path(args.json).write_text(json.dumps(_jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"summary written to {args.json}")
+    if args.plot:
+        plot_regions(args.plot, summary, artifacts)
+        print(f"figure written to {args.plot}")
     return summary
 
 
