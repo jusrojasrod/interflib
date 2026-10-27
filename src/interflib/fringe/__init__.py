@@ -18,6 +18,8 @@ Present:
 - ``edge_comparison`` single-shot fringe fraction with block and platen phases compared
                      at the edge column (column-resolved phase extrapolated to the edge),
                      which cancels any phase term common to both surfaces
+- ``geometry``       block location from the Fourier modulation and phase steps, and the
+                     rotation/mirroring that gives the readers a vertical edge, platen left
 - ``wedge``          block-platen wedge along x and y from the same comparison, in
                      fringes/px and, given the pixel scale, in microradians
 - ``fourier``        single-shot Fourier (spatial-carrier) demodulation, along each column

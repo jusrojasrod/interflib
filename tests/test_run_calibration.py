@@ -59,3 +59,12 @@ def test_plot_of_the_areas_is_written(tmp_path, capsys):
     run_calibration.main([*SMALL, "--plot", str(out)])
     assert out.stat().st_size > 10_000
     assert "figure written to" in capsys.readouterr().out
+
+
+def test_platen_on_the_right_and_rotated_block_are_normalised():
+    right = _run("--platen-side", "right")
+    assert right["image"]["geometry"]["mirrored"]
+    assert abs(right["truth"]["length_error_nm"]) < 2.0
+    rotated = _run("--scale", "0.5", "--block-rotation-deg", "8", "--block-centre-mm", "2", "0")
+    assert rotated["image"]["geometry"]["rotation_deg"] == pytest.approx(-8.0, abs=0.3)
+    assert abs(rotated["truth"]["length_error_nm"]) < 2.0
