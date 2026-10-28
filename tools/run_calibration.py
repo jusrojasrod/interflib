@@ -82,6 +82,9 @@ BAND_REACH_PX = 202          # the readers use columns up to 202 px from the edg
 ZONE_COVER_WARN = 0.95       # fraction of the band areas that must lie in the fringe zone
 FRINGE_ANGLE_WARN = 14.0     # deg: fringe rotation beyond the tested range of the readers
 FRAME_MOTION_WARN = 0.25     # fringe: motion of the fringes between frames that blurs the average
+EDGE_ORIGINS = {"phase step and dark line": "phase-step line refined to the dark chamfer line",
+                "dark line": "dark chamfer line nearest the platen side (no phase-step line along it)",
+                "phase step": "phase-step line, not confirmed by a dark chamfer line"}
 PRIOR_K = 2.0                # coverage factor of --prior-U-nm (certificates and pre-measurements give U with k = 2)
 
 
@@ -212,11 +215,11 @@ def normalise_scene(args, scene: dict, platen_side: str, notes: list) -> dict:
                          "which assumes the bench layout")
     if geo is not None:
         frames = [geo.normalise(f) for f in frames]
-        edge_x, origin = geo.edge_x, ("phase-step line refined to the dark chamfer line" if geo.refined_by_dark_line
-                                      else "phase-step line")
+        edge_x, origin = geo.edge_x, EDGE_ORIGINS[geo.edge_source]
         to_norm = geo.to_normalised
         info.update(method="general (Fourier phase step)", angle_deg=geo.angle_deg, rotation_deg=geo.rotation_deg,
                     mirrored=geo.mirrored, support=geo.support, edge_x_phase_px=geo.edge_x_phase,
+                    edge_source=geo.edge_source, dark_line_depth=geo.dark_line_depth,
                     refined_by_dark_line=geo.refined_by_dark_line, platen_width_px=geo.platen_width_px,
                     face_width_px=geo.face_width_px, face_rows=list(geo.face_rows),
                     fringe_angle_deg=float(np.degrees(np.arctan2(geo.carrier[0], geo.carrier[1]))) - geo.rotation_deg)
@@ -510,6 +513,13 @@ def _warnings(summary, inputs: Inputs) -> list:
                        "the integer order may be wrong")
     img, frac, length = summary["image"], summary["fraction"], summary["length"]
     geo = img.get("geometry", {})
+    if geo.get("edge_source") == "phase step":
+        out.append("the edge is a line of phase steps with no dark chamfer line along it: it is unconfirmed and may "
+                   "be a stray line (on the 2026-10 bench frames with 5-20 fringes such lines lay up to 150 px "
+                   "from the edge); check it with --plot or give --edge-x")
+    elif geo.get("edge_source") == "dark line":
+        out.append("no phase-step line ran along a dark chamfer line; the edge is the dark line nearest the platen "
+                   "side, which assumes a near-vertical edge")
     if geo.get("rotation_deg"):
         out.append(f"the edge was {geo['angle_deg']:+.2f} deg from vertical; the frames were rotated to read F "
                    "(interpolation)")
@@ -587,8 +597,10 @@ def format_summary(s: dict) -> str:
     out.append(f"  detection     {geo.get('method', '-')}; platen on the {geo.get('platen_side', '-')}"
                + ("; image mirrored" if geo.get("mirrored") else ""))
     if "angle_deg" in geo:
+        found = (f"phase step in {100 * geo['support']:.0f} % of the row bands" if np.isfinite(geo["support"])
+                 else "no phase-step line")
         out.append(f"  edge line     angle {geo['angle_deg']:+.2f} deg (rotation applied {geo['rotation_deg']:+.2f}); "
-                   f"found in {100 * geo['support']:.0f} % of the row bands; fringes at {geo['fringe_angle_deg']:+.1f} deg")
+                   f"{found}; dark line depth {geo['dark_line_depth']:.2f}; fringes at {geo['fringe_angle_deg']:+.1f} deg")
         out.append(f"  widths        platen {geo['platen_width_px']:.0f} px, face {geo['face_width_px']:.0f} px; "
                    f"face with fringes in rows {geo['face_rows'][0]}-{geo['face_rows'][1]}")
     out.append(f"  edge          x = {img['edge_x_px']:.2f} px ({img['edge_origin']}); evaluation row {img['eval_row_px']}")

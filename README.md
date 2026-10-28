@@ -315,8 +315,11 @@ print(f"{check.z:+.2f} {check.flipped_z:+.2f} {check.verdict}")   # -> +0.02 -5.
 - the warnings that apply.
 
 The block is found without assuming where it is or how it is oriented (`interflib.fringe.geometry.locate_block`): the
-fringe zone comes from the Fourier modulation, the edge from a line of phase steps inside it, refined to the dark
-chamfer line when there is one. The frames are then rotated (if the edge is more than 1° from vertical) and mirrored
+fringe zone comes from the Fourier modulation, and the edge from a line of phase steps inside it that the dark chamfer
+line confirms. With wide fringes the demodulation also draws stray lines of phase steps, with as much support as the
+edge, and these have no dark line along them. When no phase-step line has the dark line, the edge is the dark line
+nearest the platen side. When there is no dark line at all, the edge rests on the phase step alone and the summary
+warns that it is unconfirmed (`edge_source` in the result). The frames are then rotated (if the edge is more than 1° from vertical) and mirrored
 (if the platen is on the right) so that the readers see a vertical edge with the platen on the left. The side of the
 platen is **declared** (`--platen-side`, or `lado_platina` in the sidecar; left by default, with a warning): the
 phase cannot tell it, and the wrong side reads `1 − F`. With too few fringes for the demodulation the script falls
@@ -408,7 +411,7 @@ interflib/
 | `fringe.phase_shifting` | `least_squares_psa`, 3/4/5-step algorithms, `edge_fraction_from_phase`, `fraction_from_phase` (strips) |
 | `fringe.unwrap` | Itoh, quality-guided and Goldstein branch-cut unwrapping, residues |
 | `fringe.diagnostics` | whole-field maps, edge from the modulation, surface phase, filter-width sensitivity |
-| `fringe.geometry` | `locate_block`: fringe zone, block edge from the phase steps, rotation and mirroring for the readers |
+| `fringe.geometry` | `locate_block`: fringe zone, block edge from the phase steps confirmed by the dark chamfer line, rotation and mirroring for the readers |
 | `fringe.wedge` | block-platen wedge along `x` and `y`, in fringes/px and µrad |
 | `fringe.profile_fit` | two-strip sinusoidal fit (`FringeFractionMeasurement`), kept for strip analyses |
 | `fringe.models` | sine model, seed and branch, fit quality, `signed_fraction` |

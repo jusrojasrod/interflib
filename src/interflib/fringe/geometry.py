@@ -20,19 +20,29 @@ Am.* 72, 156-160, 1982):
    ``1 - F``), so it is **declared** (``platen_side``) and only checked against the
    expected face width when the pixel scale is known.
 
-The edge found is refined to the centre of the dark line that the chamfer draws when the
-line is present within a few pixels. With few fringes in the field the demodulation, and
-therefore this function, fails (``ValueError``).
+A line of phase steps is not always the edge: with wide fringes the demodulation draws stray
+lines with as much support as the edge, and the phase-step line moves off the edge in
+position and angle. The **dark line** that the chamfer draws along the edge confirms it:
+
+5. of the strong phase-step lines, only those along which the dark line runs compete, and
+   the edge is moved onto the dark line (its angle too, when the dark line contradicts it);
+6. when none has it, the edge is the dark line nearest the platen side inside the zone,
+   searched in the column means (a near-vertical edge);
+7. when there is no dark line either, the edge rests on the phase step alone and
+   ``edge_source`` says so: it may be a stray line.
+
+With few fringes in the field the demodulation, and therefore this function, fails
+(``ValueError``).
 """
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import affine_transform, binary_erosion, uniform_filter, uniform_filter1d
-from scipy.signal import find_peaks
+from scipy.ndimage import affine_transform, binary_erosion, map_coordinates, uniform_filter, uniform_filter1d
+from scipy.signal import argrelmin, find_peaks
 
 from .diagnostics import field_overview
-from .edge_comparison import edge_line_centre
 from .fourier import estimate_carrier_2d, modulation_mask
+from .models import parabolic_vertex
 
 ZONE_FRACTION = 0.3        # fringe zone: modulation above this fraction of its 95th percentile
 BORDER_MARGIN = 40         # px: a phase-step peak closer than this to the zone border is the border
@@ -41,9 +51,15 @@ MIN_SLABS = 6              # an edge line must be found, collinear, in at least 
 STRONG_FRACTION = 0.7      # only lines with this fraction of the best support compete for the edge
 INLIER_PX = 3.0            # px: distance of a band peak to its line to count as support
 MAX_ANGLE_DEG = 30.0       # steepest edge line considered
-REFINE_PX = 4.0            # px: the dark chamfer line refines the edge when it lies this close
-DARK_LINE_DEPTH = 0.1      # and is this much darker than the columns 10-20 px on either side
-                           # (0.47-0.52 on the 2026-10 bench frames, 0.004 where there is no line)
+REFINE_PX = 4.0            # px: the dark chamfer line confirms and refines the edge when it lies
+REFINE_PERIODS = 0.15      # within this distance of the phase-step line, or this fraction of the
+                           # fringe period if larger (the phase-step line moves off the edge as the
+                           # fringes widen: 7 px at a 133 px period on the 2026-10 bench frames)
+DARK_LINE_DEPTH = 0.25     # and is this much darker than the profile 10-20 px on its darker side
+                           # (edges 0.41-0.53 on the 2026-10 bench frames; beam borders 0.11-0.16;
+                           # below 0.06 along stray phase-step lines)
+DARK_SLAB_ROWS = 100       # bands of rows in which the dark line is followed to check the edge angle,
+DARK_FOLLOW_ROWS = 400     # over this many rows on either side of the reference row
 
 
 @dataclass
@@ -57,9 +73,17 @@ class BlockGeometry:
     edge_x : float
         Edge column in the normalised image, px (boundary between platen and block columns).
     edge_x_phase : float
-        The same edge from the phase step alone, before the dark-line refinement, px.
+        The same edge from the phase step alone, before the dark-line refinement, px
+        (``nan`` when the edge is the dark line alone).
     refined_by_dark_line : bool
-        Whether the dark chamfer line was found close enough to refine the edge.
+        Whether the edge lies on the dark chamfer line (``edge_source`` other than
+        ``"phase step"``).
+    edge_source : str
+        ``"phase step and dark line"`` (a phase-step line confirmed by the dark line),
+        ``"dark line"`` (no phase-step line had it; the dark line nearest the platen side)
+        or ``"phase step"`` (no dark line: the edge is unconfirmed and may be a stray line).
+    dark_line_depth : float
+        Relative depth of the dark line at the edge (``DARK_LINE_DEPTH`` or more confirms it).
     angle_deg : float
         Angle of the edge from the vertical in the input image, degrees (as found).
     rotation_deg : float
@@ -68,7 +92,8 @@ class BlockGeometry:
     mirrored : bool
         Whether the image was mirrored (platen declared on the right).
     support : float
-        Fraction of the bands of rows in which the edge line was found.
+        Fraction of the bands of rows in which the phase-step edge line was found (``nan``
+        when the edge is the dark line alone).
     platen_width_px, face_width_px : float
         Width of the fringe zone left of the edge, and of the face right of it (up to the
         next strong edge line or the end of the zone), at the reference row, px.
@@ -86,6 +111,8 @@ class BlockGeometry:
     edge_x: float
     edge_x_phase: float
     refined_by_dark_line: bool
+    edge_source: str
+    dark_line_depth: float
     angle_deg: float
     rotation_deg: float
     mirrored: bool
@@ -208,14 +235,88 @@ def _detect(img, platen_side, row_span):
     if not lines:
         raise ValueError("no edge line of phase steps found inside the fringe zone")
     y_ref = (y_lo + y_hi) / 2
-    # Weak lines (scratches, stray fringes) do not compete. Of the strong ones (a block with
-    # platen around it has two), the one nearest the declared platen side is the edge with
-    # the platen on that side and the block on the other.
+    # Weak lines (scratches, stray fringes) do not compete.
     best = max(line[2] for line in lines)
     lines = sorted((line for line in lines if line[2] >= STRONG_FRACTION * best),
                    key=lambda line: line[0] + line[1] * y_ref)
-    a, b, support = lines[0] if platen_side == "left" else lines[-1]
-    return phase_map, zone, step, a, b, support, y_ref, lines
+    return phase_map, zone, step, y_ref, lines
+
+
+def _choose_edge(img, zone, lines, platen_side, y_c, period):
+    # Of the strong lines (a block with platen around it has two), those along which the
+    # dark chamfer line runs are the block outline; a line without it is a stray phase step
+    # (on the 2026-10 bench frames with 5 to 20 fringes such lines lay up to 150 px from the
+    # edge, with as much support as the edge). When none has it, the dark lines inside the
+    # zone stand in for them. Of the candidates, the one nearest the declared platen side is
+    # the edge with the platen on that side and the block on the other.
+    # Returns (phase line or None, edge line (a, b), dark-line depth, edge source).
+    half = int(min(DARK_FOLLOW_ROWS, max(200, 3 * period)))     # three fringes at least
+    rows = (max(0, int(y_c) - half), min(img.shape[0], int(y_c) + half))
+    reach = max(REFINE_PX, REFINE_PERIODS * period)
+    dark = [_dark_line_across(img, a, b, rows, reach) for a, b, _ in lines]
+    confirmed = [i for i, (_, depth) in enumerate(dark) if depth >= DARK_LINE_DEPTH]
+    if confirmed:
+        i = confirmed[0] if platen_side == "left" else confirmed[-1]
+        a, b, _ = lines[i]
+        source = "phase step and dark line"
+    else:
+        columns = _dark_columns(img, zone, rows)
+        if not columns:
+            i = 0 if platen_side == "left" else len(lines) - 1
+            a, b, _ = lines[i]
+            return lines[i], (float(a), float(b)), dark[i][1], "phase step"
+        i, a, b, reach = None, float(columns[0] if platen_side == "left" else columns[-1]), 0.0, REFINE_PX
+        source = "dark line"
+    b_edge = _dark_line_slope(img, a, b, y_c, reach)
+    a = a + (b - b_edge) * y_c                             # same point at y_c, new slope
+    offset, depth = _dark_line_across(img, a, b_edge, rows, reach)
+    return (None if i is None else lines[i]), (float(a + offset), float(b_edge)), depth, source
+
+
+def _dark_columns(img, zone, rows):
+    # Columns of the dark lines inside the fringe zone (away from its borders) over ``rows``:
+    # local minima of the column means with the depth of an edge (a near-vertical edge).
+    covered = np.flatnonzero(zone[rows[0]:rows[1]].mean(axis=0) > 0.5)    # the zone has holes with wide fringes
+    if covered.size == 0:
+        return []
+    lo, hi = covered.min() + BORDER_MARGIN, covered.max() - BORDER_MARGIN
+    profile = np.convolve(img[rows[0]:rows[1]].mean(axis=0), np.ones(3) / 3, "same")
+    return [int(c) for c in argrelmin(profile, order=3)[0]
+            if lo <= c <= hi and _depth(profile, c) >= DARK_LINE_DEPTH]
+
+
+def _depth(profile, c):
+    # Relative depth of the minimum at c against the profile 10-20 px on its darker side, so
+    # that an intensity step (one bright side) is not taken for a line.
+    if c < 22 or c + 22 > len(profile):
+        return 0.0
+    ring = min(profile[c - 20:c - 10].mean(), profile[c + 11:c + 21].mean())
+    return float(1.0 - profile[c - 2:c + 3].min() / ring) if ring > 0 else 0.0
+
+
+def _dark_line_slope(img, a, b, y_c, reach):
+    # Slope of the edge: that of the phase-step line x = a + b y unless the dark-line centres
+    # of bands of DARK_SLAB_ROWS rows, over DARK_FOLLOW_ROWS rows on either side of y_c,
+    # contradict it by more than three standard errors. With wide fringes the phase-step
+    # line is off in angle (-1.9 deg where the dark line runs at +0.5 deg, on a 2026-10 bench
+    # frame at a 133 px period); with dense ones it is the steadier estimate, since the fringes pull the band
+    # centres of the dark line some 3 px about.
+    ys, xs = [], []
+    y_start = max(0, int(y_c) - DARK_FOLLOW_ROWS)
+    y_stop = min(img.shape[0], int(y_c) + DARK_FOLLOW_ROWS)
+    for y0 in range(y_start, y_stop - DARK_SLAB_ROWS + 1, DARK_SLAB_ROWS):
+        offset, depth = _dark_line_across(img, a, b, (y0, y0 + DARK_SLAB_ROWS), reach)
+        if depth >= DARK_LINE_DEPTH:
+            y = y0 + (DARK_SLAB_ROWS - 1) / 2
+            ys.append(y)
+            xs.append(a + b * y + offset)
+    if len(ys) < 4:
+        return b
+    ys, xs = np.asarray(ys), np.asarray(xs)
+    slope, intercept = np.polyfit(ys, xs, 1)
+    residual = xs - (intercept + slope * ys)
+    se = np.sqrt(residual @ residual / (len(ys) - 2) / np.sum((ys - ys.mean()) ** 2))
+    return float(slope) if abs(slope - b) > 3 * se else b
 
 
 def _forward(y, x, theta, centre, width, mirrored):
@@ -272,26 +373,26 @@ def locate_block(img, platen_side="left", row_span=None, eval_row=None, min_angl
     img = np.asarray(img, dtype=float)
     height, width = img.shape
     centre = ((height - 1) / 2, (width - 1) / 2)
-    phase_map, zone, step, a, b, support, y_ref, lines = _detect(img, platen_side, row_span)
+    phase_map, zone, step, y_ref, lines = _detect(img, platen_side, row_span)
     carrier = tuple(float(g) for g in phase_map.carrier)
-    angle = float(np.arctan(b))
+    period = 1.0 / max(np.hypot(*carrier), 1e-6)
+    y_c = y_ref if eval_row is None else eval_row
+    choice = _choose_edge(img, zone, lines, platen_side, y_c, period)
+    angle = float(np.arctan(choice[1][1]))
     theta = angle if abs(np.degrees(angle)) >= min_angle_deg else 0.0
     mirrored = platen_side == "right"
     norm = _transform(img, theta, centre, mirrored)
     if theta != 0.0 or mirrored:
-        span = None if row_span is None else row_span
-        _, zone, step, a, b, support, y_ref, lines = _detect(norm, "left", span)
-    y_e = int(round(y_ref if eval_row is None else eval_row))
-    edge_phase = float(a + b * y_e)
-
-    # Refine with the dark chamfer line when it is present close to the phase-step edge.
-    rows = (max(0, y_e - 200), min(height, y_e + 200))
-    try:
-        dark = edge_line_centre(norm, int(round(edge_phase)), rows=rows, half=8)
-        refined = abs(dark - edge_phase) <= REFINE_PX and _dark_line_depth(norm, dark, rows) >= DARK_LINE_DEPTH
-    except (ValueError, IndexError):
-        dark, refined = edge_phase, False
-    edge_x = float(dark) if refined else edge_phase
+        _, zone, step, y_ref, lines = _detect(norm, "left", row_span)
+        y_c = y_ref if eval_row is None else eval_row
+        choice = _choose_edge(norm, zone, lines, "left", y_c, period)
+    phase_line, (a, b), depth, source = choice
+    y_e = int(round(y_c))
+    edge_x = float(a + b * y_e)
+    if phase_line is None:
+        edge_phase, support = float("nan"), float("nan")
+    else:
+        edge_phase, support = float(phase_line[0] + phase_line[1] * y_e), phase_line[2]
 
     # Widths of the zone on each side, and the extent of the face along the edge.
     zone_row = np.flatnonzero(zone[y_e])
@@ -304,9 +405,9 @@ def locate_block(img, platen_side="left", row_span=None, eval_row=None, min_angl
         if x_line > edge_x + 2 * BORDER_MARGIN:
             face_end = min(face_end, x_line)
     face_width = face_end - edge_x
-    period = 1.0 / max(abs(carrier[1]), 1e-6)
-    face_rows = _face_rows(step, zone, edge_x, y_e, period)
-    return BlockGeometry(image=norm, edge_x=edge_x, edge_x_phase=edge_phase, refined_by_dark_line=bool(refined),
+    face_rows = _face_rows(step, zone, edge_x, y_e, 1.0 / max(abs(carrier[1]), 1e-6))
+    return BlockGeometry(image=norm, edge_x=edge_x, edge_x_phase=edge_phase, refined_by_dark_line=source != "phase step",
+                         edge_source=source, dark_line_depth=float(depth),
                          angle_deg=float(np.degrees(angle)), rotation_deg=float(np.degrees(theta)),
                          mirrored=mirrored, support=float(support),
                          platen_width_px=float(platen_width), face_width_px=float(face_width),
@@ -314,14 +415,22 @@ def locate_block(img, platen_side="left", row_span=None, eval_row=None, min_angl
                          centre=centre)
 
 
-def _dark_line_depth(img, x, rows):
-    # Relative depth of the column-mean minimum at x against the columns 10-20 px on either side.
-    means = np.convolve(img[rows[0]:rows[1]].mean(axis=0), np.ones(3) / 3, "same")
-    c = int(round(x))
-    if c < 20 or c + 20 > len(means):
-        return 0.0
-    ring = np.r_[means[c - 20:c - 10], means[c + 10:c + 20]].mean()
-    return float(1.0 - means[c - 2:c + 3].min() / ring) if ring > 0 else 0.0
+def _dark_line_across(img, a, b, rows, reach):
+    # Darkest point of the mean profile across the line x = a + b y (sampled along the line
+    # over ``rows``) within ``reach`` px of it: (offset from the line, px; relative depth).
+    half = int(np.ceil(reach)) + 22
+    y = np.arange(*rows, dtype=float)
+    k = np.arange(-half, half + 1, dtype=float)
+    x = a + b * y[:, None] + k[None, :]
+    if x.min() < 0 or x.max() > img.shape[1] - 1:
+        return 0.0, 0.0
+    samples = map_coordinates(img, [np.broadcast_to(y[:, None], x.shape), x], order=1)
+    profile = np.convolve(samples.mean(axis=0), np.ones(3) / 3, "same")
+    inner = np.flatnonzero(np.abs(k) <= reach)
+    c = int(inner[np.argmin(profile[inner])])
+    if profile[c] > min(profile[c - 1], profile[c + 1]):
+        return float(k[c]), 0.0                 # the profile still falls at the end of the reach
+    return float(k[c] + parabolic_vertex(*profile[c - 1:c + 2])), _depth(profile, c)
 
 
 def _face_rows(step, zone, edge_x, y_e, period, inset=(60, 160)):
