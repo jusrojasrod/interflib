@@ -279,6 +279,25 @@ classic = GaugeBlockLength(wavelength=543.5, nominal_length=2e6, cte=11.5e-6, te
 print(f"{classic.length_dev:.1f}")                  # -> 51.0
 ```
 
+**Parity of the reading.** A wrong `order_sign` and a platen declared on the wrong side
+each turn the reading into `1 − F`, and two wrong declarations cancel. Neither shows in
+the image. `check_fraction_parity` gives the deviation that the other parity would give,
+which is what a wrong declaration would cost. It is at least `(λ/2)·|2F − round(2F)|`
+away: up to `λ/4` at `F = 0.25`, and nothing at `F = 0` or `0.5`. With a prior and its
+standard uncertainty, such as the certificate of a check standard or a pre-measurement,
+it also tests both readings. The verdict is `confirmed`, `contradicted`, `undecided`
+(both fit) or `inconsistent` (neither fits). The values below are the certified 2 mm
+block of the 2026-10 campaign, read at the face centre.
+
+```python
+from interflib.dimensional.parity import check_fraction_parity
+
+check = check_fraction_parity(271.7, 51.3, 0.1416)    # lambda/2, d and F of the declared reading
+print(f"{check.flipped_length_dev:+.1f} {check.verdict}")    # -> -25.6 unverified
+check = check_fraction_parity(271.7, 51.3, 0.1416, prior_length_dev=51.0, prior_u=10.0, u_length=10.0)
+print(f"{check.z:+.2f} {check.flipped_z:+.2f} {check.verdict}")   # -> +0.02 -5.42 confirmed
+```
+
 ## End-to-end measurement
 
 `tools/run_calibration.py` runs the whole chain on one block and prints a summary:
@@ -290,6 +309,9 @@ print(f"{classic.length_dev:.1f}")                  # -> 51.0
   value at the face centre;
 - the integer order, from the nominal and, given a prior, by MEFM;
 - the length at 20 °C;
+- the parity of the reading: the length with `1 − F`, and the test of both readings against the prior
+  (`--prior-dev-nm`, `--prior-U-nm` with `k = 2`, and `--u-other-nm` for the rest of the optical uncertainty);
+  without a prior the parity is reported as not verified;
 - the warnings that apply.
 
 The block is found without assuming where it is or how it is oriented (`interflib.fringe.geometry.locate_block`): the
@@ -395,6 +417,7 @@ interflib/
 | `dimensional.coincidence` | `CoincidenceEFSolver` |
 | `dimensional.mefm` | `MonochromaticEFMSolver` |
 | `dimensional.excess_fraction` | `GaugeBlockLength` |
+| `dimensional.parity` | `check_fraction_parity`: the reading `F` against `1 − F`, and its test against a prior |
 | `io.images` | Unicode-path-safe image loading |
 
 The modules `io.meta`, `preprocessing`, `uncertainty` and `vibration` are still

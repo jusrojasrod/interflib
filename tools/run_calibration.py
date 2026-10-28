@@ -9,7 +9,11 @@ The chain, with the readers and solvers of the library:
    and humidity (modified Edlen);
 3. the integer order from the nominal length and, when a prior deviation with its
    expanded uncertainty is given, also by MEFM;
-4. the length reduced to 20 C.
+4. the length reduced to 20 C;
+5. the parity of the reading: ``order_sign`` and the platen side are declared, and a
+   wrong one reads ``1 - F``. The summary always gives the length the other parity would
+   give, and tests both against the prior when there is one (a check standard or a
+   pre-measurement, ``--prior-dev-nm`` and ``--prior-U-nm``).
 
 It prints a summary of the inputs (with their origin), the air correction, the image
 (edge, period, visibility, saturation, wedge), the fraction of every method with its
@@ -48,6 +52,7 @@ import numpy as np  # noqa: E402
 
 from interflib.dimensional.excess_fraction import GaugeBlockLength  # noqa: E402
 from interflib.dimensional.mefm import MonochromaticEFMSolver  # noqa: E402
+from interflib.dimensional.parity import check_fraction_parity  # noqa: E402
 from interflib.dimensional.refraction import EdlenRefractiveIndex  # noqa: E402
 from interflib.fringe.edge_comparison import (detect_edge_column, edge_fraction, edge_line_centre,  # noqa: E402
                                               side_band_centres, side_fit)
@@ -77,6 +82,7 @@ BAND_REACH_PX = 202          # the readers use columns up to 202 px from the edg
 ZONE_COVER_WARN = 0.95       # fraction of the band areas that must lie in the fringe zone
 FRINGE_ANGLE_WARN = 14.0     # deg: fringe rotation beyond the tested range of the readers
 FRAME_MOTION_WARN = 0.25     # fringe: motion of the fringes between frames that blurs the average
+PRIOR_K = 2.0                # coverage factor of --prior-U-nm (certificates and pre-measurements give U with k = 2)
 
 
 # --------------------------------------------------------------------------------------
@@ -429,11 +435,27 @@ def run(args, artifacts=None) -> dict:
         except (ValueError, RuntimeError) as exc:
             notes.append(f"MEFM: {exc}")
 
+    # --- parity of the reading: F against 1 - F, tested against the prior when there is one
+    has_prior = args.prior_dev_nm is not None and args.prior_U_nm is not None
+    prior_dev = args.prior_dev_nm if has_prior else 0.0
+    prior_u = args.prior_U_nm / PRIOR_K if has_prior else None
+    u_optical = math.hypot(u_length_f if np.isfinite(u_length_f) else 0.0, args.u_other_nm or 0.0)
+    check = check_fraction_parity(half, solution.length_dev, frac["fraction_used"], prior_length_dev=prior_dev,
+                                  prior_u=prior_u, u_length=u_optical)
+    parity = {"order_sign": frac["order_sign"], "platen_side": inputs.value("platen_side"),
+              "verdict": check.verdict, "fraction": check.fraction, "flipped_fraction": check.flipped_fraction,
+              "length_dev_nm": check.length_dev, "flipped_length_dev_nm": check.flipped_length_dev,
+              "shift_nm": check.shift, "separation_nm": check.separation,
+              "prior_dev_nm": prior_dev, "prior_origin": "--prior-dev-nm" if has_prior else "nominal",
+              "prior_u_nm": prior_u, "u_optical_nm": u_optical,
+              "z": check.z, "flipped_z": check.flipped_z, "log10_likelihood_ratio": check.log10_likelihood_ratio}
+
     summary = {
         "inputs": {name: {"value": value, "origin": origin} for name, (value, origin) in inputs.items()},
         "air": {"n_minus_1": n_air - 1, "wavelength_air_nm": wavelength_air, "half_wavelength_nm": half},
         **measured,
         "order": order,
+        "parity": parity,
         "length": {"length_20c_nm": solution.length, "length_20c_mm": solution.length / 1e6,
                    "deviation_from_nominal_nm": solution.length_dev, "u_from_fraction_nm": u_length_f},
     }
@@ -447,8 +469,33 @@ def run(args, artifacts=None) -> dict:
     return summary
 
 
+def _parity_warning(parity: dict, platen_assumed: bool) -> str | None:
+    z, zf = parity["z"], parity["flipped_z"]
+    other = f"with the other parity F = {parity['flipped_fraction']:.4f} and d = {parity['flipped_length_dev_nm']:+.1f} nm"
+    verdict = parity["verdict"]
+    if verdict == "unverified":
+        text = (f"the parity of the reading (order_sign and platen side) is not verified: {other} "
+                f"({parity['shift_nm']:+.1f} nm); give --prior-dev-nm and --prior-U-nm (a check standard or a "
+                "pre-measurement) to test it")
+        return text + ("; the --plot figure shows which side was taken as platen" if platen_assumed else "")
+    prior = f"the prior d = {parity['prior_dev_nm']:+.1f} nm (u = {parity['prior_u_nm']:.1f} nm)"
+    if verdict == "contradicted":
+        return (f"WRONG PARITY: {prior} agrees with the flipped reading (z = {zf:+.1f}) and not with the declared "
+                f"one (z = {z:+.1f}): order_sign or the platen side is wrong; {other}")
+    if verdict == "undecided":
+        return (f"{prior} cannot tell the two parities apart (z = {z:+.1f} declared, {zf:+.1f} flipped): a wrong "
+                f"parity would move d by {parity['shift_nm']:+.1f} nm")
+    if verdict == "inconsistent":
+        return (f"{prior} agrees with neither parity (z = {z:+.1f} declared, {zf:+.1f} flipped): check lambda_0, "
+                "the pressure, the prior and the point where F is evaluated")
+    return None
+
+
 def _warnings(summary, inputs: Inputs) -> list:
     out = []
+    parity_note = _parity_warning(summary["parity"], inputs["platen_side"][1].startswith("assumed"))
+    if parity_note:
+        out.append(parity_note)
     for name in ("pressure_pa", "block_temperature_c", "order_sign", "platen_side"):
         value, origin = inputs[name]
         if origin.startswith("assumed"):
@@ -484,8 +531,6 @@ def _warnings(summary, inputs: Inputs) -> list:
     if img.get("fringe_motion_between_frames", 0.0) > FRAME_MOTION_WARN:
         out.append(f"the fringes moved {img['fringe_motion_between_frames']:.2f} fringe between frames: the averaged "
                    "image loses contrast")
-    if summary["inputs"]["platen_side"]["origin"].startswith("assumed") and img.get("geometry", {}).get("face_width_px"):
-        out.append("check in the --plot figure that the platen is on the declared side; the other way F reads 1 - F")
     if img["saturated_fraction"] > SATURATION_WARN:
         out.append(f"{100 * img['saturated_fraction']:.1f} % of the pixels in the analysis region are saturated")
     if img["median_band_r2_sine"] is not None and img["median_band_r2_sine"] < R2_WARN:
@@ -578,6 +623,15 @@ def format_summary(s: dict) -> str:
     if "mefm_length_dev_nm" in order:
         lo, hi = order["mefm_acceptance_interval_nm"]
         out.append(f"  MEFM          d = {order['mefm_length_dev_nm']:+.1f} nm (prior interval {lo:+.1f} to {hi:+.1f} nm)")
+    par = s["parity"]
+    out.append(f"\nParity (order_sign {par['order_sign']:+d}, platen on the {par['platen_side']}): {par['verdict']}")
+    out.append(f"  declared      F = {par['fraction']:.4f}   d = {par['length_dev_nm']:+.1f} nm")
+    out.append(f"  flipped       F = {par['flipped_fraction']:.4f}   d = {par['flipped_length_dev_nm']:+.1f} nm   "
+               f"(shift {par['shift_nm']:+.1f} nm; the combs are {par['separation_nm']:.1f} nm apart at least)")
+    if par["prior_u_nm"] is not None:
+        out.append(f"  prior         d = {par['prior_dev_nm']:+.1f} nm, u = {par['prior_u_nm']:.1f} nm (U / {PRIOR_K:g}), "
+                   f"u optical = {par['u_optical_nm']:.1f} nm;  z = {par['z']:+.2f} declared, {par['flipped_z']:+.2f} "
+                   f"flipped (log10 likelihood ratio {par['log10_likelihood_ratio']:+.1f})")
     if "truth" in s:
         t = s["truth"]
         out.append(f"\nTruth          F = {t['fraction']:.4f}, L = {t['length_20c_nm'] / 1e6:.7f} mm;   "
@@ -725,7 +779,10 @@ def parse_args(argv=None):
     ap.add_argument("--face-centre-x", type=float, help="column of the face centre, px, to evaluate F there")
     ap.add_argument("--pixel-mm", type=float, help="pixel size on the object, mm (wedge in microradians)")
     ap.add_argument("--prior-dev-nm", type=float, help="prior deviation from nominal for MEFM, nm")
-    ap.add_argument("--prior-U-nm", type=float, help="expanded uncertainty of that prior, nm")
+    ap.add_argument("--prior-U-nm", type=float,
+                    help="expanded uncertainty of that prior (k = 2), nm; with --prior-dev-nm it also tests the parity")
+    ap.add_argument("--u-other-nm", type=float,
+                    help="standard uncertainty of d from all but F (air, lambda_0, temperature), nm, for the parity test")
     ap.add_argument("--bit-depth", type=int, default=12, help="sensor bit depth, for saturation (default 12)")
     ap.add_argument("--json", metavar="PATH", help="write the summary to PATH")
     ap.add_argument("--plot", metavar="PATH", help="save a figure of the areas used (frame, edge zoom, band phases)")

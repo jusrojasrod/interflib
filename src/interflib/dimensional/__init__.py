@@ -17,4 +17,6 @@ Modules:
                        index is delegated to ``refraction`` via ``from_environment``
 - ``mefm``             monochromatic excess fraction solver: the single-wavelength
                        adaptation that resolves the order from a prior calibration bound
+- ``parity``           the reading F against 1 - F (order direction and platen side
+                       declared wrong): what a wrong parity gives, and its test against a prior
 """

@@ -35,6 +35,20 @@ def test_reversed_carrier_needs_the_declared_order_sign():
     assert abs(wrong["truth"]["length_error_nm"]) > 50.0
 
 
+def test_parity_is_reported_and_tested_against_a_prior():
+    plain = _run()
+    assert plain["parity"]["verdict"] == "unverified"
+    assert any("parity of the reading" in w for w in plain["warnings"])
+    assert plain["parity"]["flipped_fraction"] == pytest.approx(1 - plain["fraction"]["fraction_used"])
+    prior = ("--prior-dev-nm", "51", "--prior-U-nm", "20")
+    assert _run(*prior)["parity"]["verdict"] == "confirmed"
+    wrong = _run("--fringes-y", "-30", "--order-sign", "1", *prior)
+    assert wrong["parity"]["verdict"] == "contradicted"
+    assert any(w.startswith("WRONG PARITY") for w in wrong["warnings"])
+    # the flipped reading of the wrong declaration is the true length
+    assert wrong["parity"]["flipped_length_dev_nm"] == pytest.approx(51.0, abs=2.0)
+
+
 def test_json_summary_is_written(tmp_path, capsys):
     out = tmp_path / "summary.json"
     run_calibration.main([*SMALL, "--json", str(out)])
