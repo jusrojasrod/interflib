@@ -3,9 +3,13 @@ import numpy as np
 import pytest
 
 from interflib.fringe.edge_comparison import (
+    ColumnPhases,
     detect_edge_column,
     edge_fraction,
     edge_line_centre,
+    fraction_at_edge,
+    side_band_centres,
+    span_sensitivity,
 )
 from interflib.fringe.wedge import fringe_gradient_to_urad, measure_wedge
 
@@ -175,3 +179,55 @@ def test_edge_detection_defaults_to_the_whole_image():
     approx = detect_edge_column(img)
     assert abs(approx - EDGE_X) <= 6
     assert abs(edge_line_centre(img, approx) - (EDGE_X - 0.5)) < 0.3
+
+
+# --------------------------------------------------------------------------------------
+# Sensitivity to the bands in the side fits
+# --------------------------------------------------------------------------------------
+def _side_phases(xs, phase):
+    return ColumnPhases(x=xs, phase=phase % (2 * np.pi), phase_unwrapped=phase, period=np.full(xs.size, PERIOD),
+                        r2=np.ones(xs.size), phase_error=np.zeros(xs.size))
+
+
+def _straight_sides(fraction, curvature_block=0.0, g_p=2e-3, g_b=5e-3):
+    """Band phases of both sides: straight lines that meet ``fraction`` at the edge, the
+    block side optionally bent by ``curvature_block`` (fringes/px^2) about the edge."""
+    xs_p, xs_b = side_band_centres(EDGE_X, 30, 180, 5)
+    u_b = xs_b - EDGE_X
+    platen = 2 * np.pi * (0.1 + g_p * (xs_p - EDGE_X))
+    block = 2 * np.pi * (0.1 + fraction + g_b * u_b + curvature_block * u_b ** 2)
+    return _side_phases(xs_p, platen), _side_phases(xs_b, block)
+
+
+def test_span_sensitivity_vanishes_for_straight_sides():
+    platen, block = _straight_sides(0.3)
+    sens = span_sensitivity(platen, block, EDGE_X, EVAL_ROW)
+    assert np.allclose(sens.fraction, 0.3, atol=1e-9)
+    assert sens.deviation < 1e-9 and sens.model_error < 1e-9
+
+
+def test_span_sensitivity_matches_the_line_error_of_a_curved_side():
+    """A straight line fitted to c*u^2 over band distances u misses the edge by
+    c*(var(u) - mean(u)^2): each variant shifts F by that amount."""
+    c = 2e-6
+    platen, block = _straight_sides(0.3, curvature_block=c)
+    sens = span_sensitivity(platen, block, EDGE_X, EVAL_ROW)
+    for (gap, span), f in zip(sens.variants, sens.fraction, strict=True):
+        u = np.arange(gap, span + 1, 5, dtype=float)
+        assert f - 0.3 == pytest.approx(c * (u.var() - u.mean() ** 2), rel=1e-6)
+    shifts = sens.fraction - sens.fraction[0]
+    assert sens.deviation == pytest.approx(np.abs(shifts).max())
+    assert sens.model_error == pytest.approx(sens.deviation)
+
+
+def test_span_sensitivity_at_another_column_extends_each_variant():
+    """At the face centre each variant extends its own lines: exact for straight sides,
+    and the reading of the first variant equals the extended edge reading."""
+    platen, block = _straight_sides(0.3)
+    at_x = EDGE_X + 300
+    sens = span_sensitivity(platen, block, EDGE_X, EVAL_ROW, at_x=at_x)
+    assert np.allclose(sens.fraction, (0.3 + (5e-3 - 2e-3) * 300) % 1.0, atol=1e-9)
+    curved = span_sensitivity(*_straight_sides(0.3, curvature_block=2e-6), EDGE_X, EVAL_ROW, at_x=at_x)
+    edge = fraction_at_edge(*_straight_sides(0.3, curvature_block=2e-6), EDGE_X, EVAL_ROW)
+    assert curved.fraction[0] == pytest.approx((edge.fraction + (edge.slope_block - edge.slope_platen) * 300) % 1.0)
+    assert curved.deviation > span_sensitivity(*_straight_sides(0.3, curvature_block=2e-6), EDGE_X, EVAL_ROW).deviation

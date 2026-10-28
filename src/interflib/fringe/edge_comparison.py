@@ -21,6 +21,10 @@ every common term cancels by construction, without needing the fringes to be
 horizontal. The block-platen wedge does **not** cancel -- it is a real property of the
 wrung assembly -- so ``F`` refers to the edge column at the evaluation row.
 
+The lines cross a gap next to the edge where no band is read, so ``F`` rests on the side
+phases being straight up to the edge. :func:`span_sensitivity` repeats the comparison
+with other bands; a fraction that moves with them shows that they are not.
+
 Image columns are ``x`` and rows ``y``; fringes are expected to be roughly horizontal
 (spatial carrier along ``y``). The platen is assumed to lie left of the edge and the
 block right of it; mirror the image for the opposite layout.
@@ -401,3 +405,80 @@ def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
                               slope_platen=float(dp / (2 * np.pi)), slope_block=float(db / (2 * np.pi)),
                               edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block,
                               order_sign=order_sign)
+
+
+SPAN_VARIANTS = ((30, 180), (45, 180), (60, 180), (30, 120))   # (gap, span) px; the first is the reading
+
+
+@dataclass
+class SpanSensitivity:
+    """Fringe fraction as a function of the bands that enter the side fits.
+
+    Attributes
+    ----------
+    variants : numpy.ndarray
+        ``(gap, span)`` of each variant, px; the first is the reference reading.
+    fraction : numpy.ndarray
+        Fraction of each variant at ``at_x``, unwrapped next to the first, fringes.
+    deviation : float
+        Largest absolute difference from the first variant, fringes.
+    model_error : float
+        Standard uncertainty of the fraction from the choice of bands, fringes: the
+        deviation itself. A rectangular distribution of half-width ``deviation`` would
+        give ``deviation / sqrt(3)`` (JCGM 100:2008, 4.3.7), but in simulations where the
+        image is blurred coherently across the edge the bias of the reading reached 1.2
+        times the deviation, which would leave it at about two standard uncertainties.
+    at_x : float
+        Column where the fractions are evaluated, px.
+    """
+
+    variants: np.ndarray
+    fraction: np.ndarray
+    deviation: float
+    model_error: float
+    at_x: float
+
+
+def span_sensitivity(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row, variants=SPAN_VARIANTS,
+                     at_x=None, deg=1, r2_min=0.3, order_sign=1) -> SpanSensitivity:
+    """Repeat the comparison at the edge with other bands and see how far the fraction moves.
+
+    The side lines are extrapolated across the ``gap`` next to the edge, where no band is
+    read. When the side phases are not straight over the bands (a curvature that differs
+    between block and platen, or a phase that bends towards the other surface close to the
+    edge), the fraction depends on which bands enter the fits, and ``fraction_error``,
+    which only reflects the scatter about the lines, does not show it. Leaving out the
+    bands nearest the edge or shortening the span exposes that dependence. The deviation
+    also contains part of the band noise, so on a straight field it is of the order of
+    ``fraction_error``.
+
+    Parameters
+    ----------
+    platen, block : ColumnPhases
+        Column phases left and right of the edge, as in :func:`fraction_at_edge`. Every
+        variant must lie inside the bands they cover; the variants only select among them.
+    edge_x, eval_row
+        As in :func:`fraction_at_edge`.
+    variants : sequence of (int, int)
+        ``(gap, span)`` of each variant, px; the first is the reading being assessed.
+    at_x : float, optional
+        Column where the fraction is used: the edge if omitted. At another column (the
+        face centre) each variant extends its own side lines there.
+    deg, r2_min, order_sign
+        As in :func:`fraction_at_edge`.
+
+    Returns
+    -------
+    SpanSensitivity
+    """
+    at = float(edge_x if at_x is None else at_x)
+    values = []
+    for gap, span in variants:
+        res = fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+        values.append(res.fraction + order_sign * (res.slope_block - res.slope_platen) * (at - edge_x))
+    values = np.asarray(values)
+    first = values[0] % 1.0
+    fractions = first + (values - first + 0.5) % 1.0 - 0.5
+    deviation = float(np.max(np.abs(fractions - first)))
+    return SpanSensitivity(variants=np.asarray(variants, dtype=int), fraction=fractions, deviation=deviation,
+                           model_error=deviation, at_x=at)

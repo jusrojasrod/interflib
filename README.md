@@ -116,6 +116,20 @@ print(f"F = {res.fraction:.4f} ± {res.fraction_error:.4f}")      # -> F = 0.893
 the edge. It does not cover systematic effects. On real images, refine the edge with
 `edge_line_centre`, which finds the centre of the dark line that the chamfer draws.
 
+The lines cross the 30 px next to the edge where no band is read, so `F` assumes that
+the side phases stay straight up to the edge. `span_sensitivity` repeats the comparison
+with the bands from 45 or 60 px, or up to 120 px, and gives the largest change of `F`,
+which is also its standard uncertainty (`model_error`): with the image blurred coherently
+across the edge, simulations gave biases of up to 1.2 times that change. On the 2026-10
+bench images `F` moved by 1 to 15 nm this way, well above `fraction_error`.
+
+```python
+from interflib.fringe.edge_comparison import span_sensitivity
+
+sens = span_sensitivity(res.platen, res.block, res.edge_x, res.eval_row)
+print(f"{sens.deviation:.4f} {sens.model_error:.4f}")          # -> 0.0001 0.0001
+```
+
 ![Edge comparison](docs/images/edge_comparison.png)
 
 ### Single shot: Fourier demodulation
@@ -305,8 +319,8 @@ print(f"{check.z:+.2f} {check.flipped_z:+.2f} {check.verdict}")   # -> +0.02 -5.
 - the inputs, each with its origin (sidecar, command line, assumption);
 - the air correction;
 - the image: edge, period, visibility, saturation and wedge;
-- the fraction from the three single-shot readers, with their spread, the repeatability over the frames, and the
-  value at the face centre;
+- the fraction from the three single-shot readers, with their spread, the repeatability over the frames, how far
+  the choice of bands moves it (`span_sensitivity`, which enters `u(F)`), and the value at the face centre;
 - the integer order, from the nominal and, given a prior, by MEFM;
 - the length at 20 °C;
 - the parity of the reading: the length with `1 − F`, and the test of both readings against the prior
@@ -346,6 +360,8 @@ Fringe fraction (order_sign +1; primary: fourier)
     fourier2d  F = 0.1636   u_e(F) = nan
   spread between methods 0.0001 fringe (0.0 nm)
   repeatability (5 frames) s = 0.0001, s/sqrt(n) = 0.0000 fringe
+  ...
+  band choice   gap-span px: 30-180 0.1636, 45-180 0.1636, 60-180 0.1636, 30-120 0.1635; u_m(F) = 0.0000 (0.0 nm)
 ...
 Truth          F = 0.1636, L = 2.0000510 mm;   error F -0.0000, L -0.00 nm
 ```
@@ -406,7 +422,7 @@ interflib/
 | Module | What it provides |
 |---|---|
 | `simulation` | `synthesize_interferogram` with `SceneGeometry`, `PhaseModel`, `Illumination`, `SensorModel`; presets for the Thorlabs CS505MU camera |
-| `fringe.edge_comparison` | `edge_fraction`, `fraction_at_edge`, `column_phases`, `detect_edge_column`, `edge_line_centre` |
+| `fringe.edge_comparison` | `edge_fraction`, `fraction_at_edge`, `span_sensitivity`, `column_phases`, `detect_edge_column`, `edge_line_centre` |
 | `fringe.fourier` | column and 2-D demodulation, `fourier_edge_fraction(_2d)`, carrier-free phase, `unwrap_phase_map` |
 | `fringe.phase_shifting` | `least_squares_psa`, 3/4/5-step algorithms, `edge_fraction_from_phase`, `fraction_from_phase` (strips) |
 | `fringe.unwrap` | Itoh, quality-guided and Goldstein branch-cut unwrapping, residues |

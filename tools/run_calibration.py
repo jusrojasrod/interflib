@@ -4,7 +4,9 @@ The chain, with the readers and solvers of the library:
 
 1. the fringe fraction ``F`` at the edge column and evaluation row, with the three
    single-shot readers (sine fit, Fourier by columns, Fourier in two dimensions); one of
-   them is the primary and the others are a cross-check;
+   them is the primary and the others are a cross-check. Its ``u(F)`` combines the scatter
+   about the side lines, the repeatability over the frames and how far ``F`` moves with
+   the bands in the side fits (``span_sensitivity``);
 2. the wavelength in air from the vacuum wavelength and the air temperature, pressure
    and humidity (modified Edlen);
 3. the integer order from the nominal length and, when a prior deviation with its
@@ -55,7 +57,7 @@ from interflib.dimensional.mefm import MonochromaticEFMSolver  # noqa: E402
 from interflib.dimensional.parity import check_fraction_parity  # noqa: E402
 from interflib.dimensional.refraction import EdlenRefractiveIndex  # noqa: E402
 from interflib.fringe.edge_comparison import (detect_edge_column, edge_fraction, edge_line_centre,  # noqa: E402
-                                              side_band_centres, side_fit)
+                                              side_band_centres, side_fit, span_sensitivity)
 from interflib.fringe.fourier import (demodulate_columns, estimate_carrier, fourier_edge_fraction,  # noqa: E402
                                       fourier_edge_fraction_2d)
 from interflib.fringe.geometry import locate_block  # noqa: E402
@@ -324,10 +326,6 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     per_frame = _wrap(per_frame, reference) if per_frame else np.array([])
     s_frame = float(np.std(per_frame, ddof=1)) if per_frame.size > 1 else float("nan")
     u_mean = s_frame / math.sqrt(per_frame.size) if per_frame.size > 1 else float("nan")
-    u_extrap = primary.fraction_error
-    parts = [u for u in (u_extrap, u_mean) if np.isfinite(u)]
-    u_fraction = float(math.sqrt(sum(u * u for u in parts))) if parts else float("nan")
-
     # --- F at the face centre: both side lines extended to x_c (exact for straight lines)
     x_c = scene.get("face_centre_x")
     if x_c is not None:
@@ -335,6 +333,12 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
         fraction_used, where = float((primary.fraction + shift) % 1.0), "face centre column"
     else:
         shift, fraction_used, where = None, primary.fraction, "edge column"
+
+    # --- sensitivity to the bands in the side fits, where F is used: a model error of the lines
+    choice = span_sensitivity(primary.platen, primary.block, edge_x, eval_row, at_x=x_c, order_sign=order_sign)
+    u_extrap, u_bands = primary.fraction_error, choice.model_error
+    parts = [u for u in (u_extrap, u_mean, u_bands) if np.isfinite(u)]
+    u_fraction = float(math.sqrt(sum(u * u for u in parts))) if parts else float("nan")
 
     # --- image quality: saturation, visibility per side, band fits, wedge
     max_adu = 2 ** args.bit_depth - 1
@@ -386,7 +390,10 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
                                  for m in readings},
                      "spread_between_methods": spread,
                      "frames_read": int(per_frame.size), "repeatability_per_frame": s_frame,
-                     "u_mean_of_frames": u_mean, "u_extrapolation": u_extrap, "u_fraction": u_fraction,
+                     "u_mean_of_frames": u_mean, "u_extrapolation": u_extrap,
+                     "band_variants": {f"{gap}-{span}": float(f) for (gap, span), f in zip(choice.variants, choice.fraction,
+                                                                                          strict=True)},
+                     "band_deviation": choice.deviation, "u_band_choice": u_bands, "u_fraction": u_fraction,
                      "edge_fraction": primary.fraction, "face_centre_x_px": x_c,
                      "shift_edge_to_centre": shift, "fraction_used": fraction_used, "evaluated_at": where},
     }
@@ -549,6 +556,13 @@ def _warnings(summary, inputs: Inputs) -> list:
     if np.isfinite(u) and u > 0 and frac["spread_between_methods"] > SIGMA_WARN * u:
         out.append(f"the methods disagree by {frac['spread_between_methods']:.4f} fringe, more than "
                    f"{SIGMA_WARN:g} u(F) = {SIGMA_WARN * u:.4f}")
+    noise = next((u for u in (frac["u_extrapolation"], frac["u_mean_of_frames"]) if np.isfinite(u)), float("nan"))
+    if np.isfinite(noise) and frac["band_deviation"] > SIGMA_WARN * noise:
+        half = summary["air"]["half_wavelength_nm"]
+        out.append(f"F moves by up to {frac['band_deviation']:.4f} fringe ({frac['band_deviation'] * half:.1f} nm) "
+                   "when the bands nearest the edge are left out or the span is shortened, more than "
+                   f"{SIGMA_WARN:g} times the scatter about the side lines: the side phases are not straight up to "
+                   f"the edge; u(F) includes it as u_m(F) = {frac['u_band_choice']:.4f}")
     if summary["order"]["margin_to_quarter_wave_nm"] < SIGMA_WARN * max(length["u_from_fraction_nm"], 1.0):
         out.append("the deviation from nominal is close to a quarter wave: the integer order from the nominal "
                    "prior is not reliable")
@@ -559,8 +573,8 @@ def _warnings(summary, inputs: Inputs) -> list:
                    "defined; give --face-centre-x to extend both sides to the centre (the block-platen wedge "
                    "makes the two differ)")
     else:
-        out.append("F at the face centre extends the side lines beyond the measured bands; u(F) does not include "
-                   "that extrapolation")
+        out.append("F at the face centre extends the side lines beyond the measured bands; u(F) includes how the "
+                   "choice of bands moves it there, but not the scatter of that extension")
     if not np.isfinite(frac["u_extrapolation"]):
         out.append(f"the {frac['primary_method']} reader gives no extrapolation uncertainty; u(F) is the "
                    "repeatability only")
@@ -628,6 +642,9 @@ def format_summary(s: dict) -> str:
     if frac["shift_edge_to_centre"] is not None:
         out.append(f"  edge F = {frac['edge_fraction']:.4f} -> face centre (x = {frac['face_centre_x_px']:.1f} px) "
                    f"F = {frac['fraction_used']:.4f}")
+    variants = ", ".join(f"{name} {f % 1.0:.4f}" for name, f in frac["band_variants"].items())
+    out.append(f"  band choice   gap-span px: {variants}; u_m(F) = {frac['u_band_choice']:.4f} "
+               f"({frac['u_band_choice'] * s['air']['half_wavelength_nm']:.1f} nm)")
     out.append(f"  F used = {frac['fraction_used']:.4f} at the {frac['evaluated_at']}, u(F) = {_fmt(frac['u_fraction'])}")
     order = s["order"]
     out.append(f"\nInteger order  kappa = {order['integer_order']}, nominal fraction F' = {order['nominal_fraction']:.4f}, "

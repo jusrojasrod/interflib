@@ -35,6 +35,17 @@ def test_reversed_carrier_needs_the_declared_order_sign():
     assert abs(wrong["truth"]["length_error_nm"]) > 50.0
 
 
+def test_band_choice_is_reported_and_enters_u_of_f():
+    frac = _run()["fraction"]
+    assert list(frac["band_variants"]) == ["30-180", "45-180", "60-180", "30-120"]
+    assert frac["band_variants"]["30-180"] % 1.0 == pytest.approx(frac["fraction_used"], abs=1e-9)
+    assert frac["u_band_choice"] == pytest.approx(frac["band_deviation"])
+    parts = [u for u in (frac["u_extrapolation"], frac["u_mean_of_frames"], frac["u_band_choice"]) if u == u]
+    assert frac["u_fraction"] == pytest.approx(sum(u * u for u in parts) ** 0.5)
+    # the simulated sides are straight: the choice of bands hardly moves F
+    assert frac["band_deviation"] < 0.002
+
+
 def test_parity_is_reported_and_tested_against_a_prior():
     plain = _run()
     assert plain["parity"]["verdict"] == "unverified"
