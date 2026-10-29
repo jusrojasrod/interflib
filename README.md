@@ -318,9 +318,10 @@ print(f"{check.z:+.2f} {check.flipped_z:+.2f} {check.verdict}")   # -> +0.02 -5.
 
 - the inputs, each with its origin (sidecar, command line, assumption);
 - the air correction;
-- the image: edge, period, visibility, saturation and wedge;
+- the image: edge, face centre, period, visibility, saturation and wedge;
 - the fraction from the three single-shot readers, with their spread, the repeatability over the frames, how far
-  the choice of bands moves it (`span_sensitivity`, which enters `u(F)`), and the value at the face centre;
+  the choice of bands moves it (`span_sensitivity`, which enters `u(F)`), and the value at the face centre with the
+  uncertainty of its position;
 - the integer order, from the nominal and, given a prior, by MEFM;
 - the length at 20 °C;
 - the parity of the reading: the length with `1 − F`, and the test of both readings against the prior
@@ -339,6 +340,30 @@ platen is **declared** (`--platen-side`, or `lado_platina` in the sidecar; left 
 phase cannot tell it, and the wrong side reads `1 − F`. With too few fringes for the demodulation the script falls
 back to the bench heuristic.
 
+The central length is defined at the centre of the free measuring face (ISO 3650:1998, clause 3), so `F` is read
+there when the centre can be placed (`interflib.fringe.geometry.locate_face_centre`). The modes are tried in this
+order:
+
+1. **outline**: both lateral edges and both ends of the face are found, and the centre is their midpoint. No
+   input is needed. This needs the whole block in the field with platen around it.
+2. **outline and dimensions**: `--face-mm WIDTH LENGTH` (with `--u-face-mm`), or `cara_mm` and `u_cara_mm` in the
+   sidecar, fills in what the field does not show. The scale comes from the pair of lateral edges, or else the pair of ends, or else `--pixel-mm`. An axis
+   with one feature only takes that feature plus half the dimension. The dimensions belong to the block, so they
+   are given once and hold for every series and position.
+3. **manual**: `--face-centre Y X` in pixels of the input frames, with `--u-face-centre-px`.
+
+The far edge is taken with the same order of preference as the edge (phase-step line with the dark chamfer line,
+dark line, phase-step line). When none of these is found, the end of the lit field is taken, which may be the border
+of the beam. A far edge without the dark line is checked against the declared pixel size (`--pixel-mm`) when the
+dimensions are given. The end of the lit field is used only if the width it gives agrees within 5 %, and an
+unconfirmed phase-step line is dropped if it disagrees. In the 2026-10 position series the beam clipped the block,
+and without this check the centre would have moved by up to 325 px. An end of the face is a line of phase
+steps across the face that the platen does not share at the same rows (the border of the beam crosses both), with
+fringes on both sides. The evaluation row moves to the centre, and the uncertainty of the position enters `u(F)`
+through the wedge, `u_c(F)² = (Δg_x·u(x_c))² + (Δg_y·u(y_c))²`. Without a centre, `F` is read at the edge column
+and the summary warns. `--face-centre-x` keeps its earlier meaning: `F` is extended to that column at the
+evaluation row.
+
 Without arguments it measures a simulated 2 mm block and also reports the error against the truth. `--series` reads
 a real burst and its `.meta.yaml` sidecar; this needs the `tools` extra (pyyaml). A value missing from the sidecar,
 such as the pressure, has to be given on the command line: the script stops rather than assume it. `--json` writes
@@ -348,7 +373,8 @@ lines extended to the edge.
 
 ```bash
 python tools/run_calibration.py                                   # simulated block
-python tools/run_calibration.py --series DATA/20261005_L1_tg-inm_2mm_repet-2_serie-010     --pressure 75300 --face-centre-x 1340.5 --pixel-mm 0.0179 --json summary.json --plot areas.png
+python tools/run_calibration.py --block-size-mm 9 14                # simulated block, whole face in the field
+python tools/run_calibration.py --series DATA/20261005_L1_tg-inm_2mm_repet-2_serie-010     --pressure 75300 --face-mm 9 30 --json summary.json --plot areas.png
 ```
 
 ```
@@ -427,7 +453,7 @@ interflib/
 | `fringe.phase_shifting` | `least_squares_psa`, 3/4/5-step algorithms, `edge_fraction_from_phase`, `fraction_from_phase` (strips) |
 | `fringe.unwrap` | Itoh, quality-guided and Goldstein branch-cut unwrapping, residues |
 | `fringe.diagnostics` | whole-field maps, edge from the modulation, surface phase, filter-width sensitivity |
-| `fringe.geometry` | `locate_block`: fringe zone, block edge from the phase steps confirmed by the dark chamfer line, rotation and mirroring for the readers |
+| `fringe.geometry` | `locate_block`: fringe zone, block edge from the phase steps confirmed by the dark chamfer line, rest of the face outline (far edge, ends), rotation and mirroring for the readers; `locate_face_centre`: centre of the measuring face from the outline, the face dimensions or by hand |
 | `fringe.wedge` | block-platen wedge along `x` and `y`, in fringes/px and µrad |
 | `fringe.profile_fit` | two-strip sinusoidal fit (`FringeFractionMeasurement`), kept for strip analyses |
 | `fringe.models` | sine model, seed and branch, fit quality, `signed_fraction` |

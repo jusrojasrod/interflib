@@ -2,11 +2,16 @@
 
 The chain, with the readers and solvers of the library:
 
-1. the fringe fraction ``F`` at the edge column and evaluation row, with the three
-   single-shot readers (sine fit, Fourier by columns, Fourier in two dimensions); one of
-   them is the primary and the others are a cross-check. Its ``u(F)`` combines the scatter
-   about the side lines, the repeatability over the frames and how far ``F`` moves with
-   the bands in the side fits (``span_sensitivity``);
+1. the fringe fraction ``F`` with the three single-shot readers (sine fit, Fourier by
+   columns, Fourier in two dimensions); one of them is the primary and the others are a
+   cross-check. ``F`` is read at the centre of the measuring face, where the central length
+   is defined (ISO 3650:1998, clause 3), when ``locate_face_centre`` can place it: from the
+   whole outline of the face, from part of it and the face dimensions (``--face-mm``), or
+   from a centre given by hand (``--face-centre``). The face dimensions may also come from
+   the sidecar (``cara_mm``, ``u_cara_mm``). Otherwise it is read at the edge column
+   and the evaluation row, with a warning. Its ``u(F)`` combines the scatter about the side
+   lines, the repeatability over the frames, how far ``F`` moves with the bands in the side
+   fits (``span_sensitivity``) and the uncertainty of the centre through the wedge;
 2. the wavelength in air from the vacuum wavelength and the air temperature, pressure
    and humidity (modified Edlen);
 3. the integer order from the nominal length and, when a prior deviation with its
@@ -41,6 +46,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -60,7 +66,7 @@ from interflib.fringe.edge_comparison import (detect_edge_column, edge_fraction,
                                               side_band_centres, side_fit, span_sensitivity)
 from interflib.fringe.fourier import (demodulate_columns, estimate_carrier, fourier_edge_fraction,  # noqa: E402
                                       fourier_edge_fraction_2d)
-from interflib.fringe.geometry import locate_block  # noqa: E402
+from interflib.fringe.geometry import locate_block, locate_face_centre  # noqa: E402
 from interflib.fringe.wedge import measure_wedge  # noqa: E402
 from interflib.io.images import load_image  # noqa: E402
 from interflib.simulation import PhaseModel, SceneGeometry, SensorModel, synthesize_interferogram  # noqa: E402
@@ -84,6 +90,7 @@ BAND_REACH_PX = 202          # the readers use columns up to 202 px from the edg
 ZONE_COVER_WARN = 0.95       # fraction of the band areas that must lie in the fringe zone
 FRINGE_ANGLE_WARN = 14.0     # deg: fringe rotation beyond the tested range of the readers
 FRAME_MOTION_WARN = 0.25     # fringe: motion of the fringes between frames that blurs the average
+ASPECT_WARN = 0.02           # relative mismatch of the measured face aspect against the declared dimensions
 EDGE_ORIGINS = {"phase step and dark line": "phase-step line refined to the dark chamfer line",
                 "dark line": "dark chamfer line nearest the platen side (no phase-step line along it)",
                 "phase step": "phase-step line, not confirmed by a dark chamfer line"}
@@ -106,6 +113,17 @@ def _first(*candidates):
         if value is not None:
             return value, origin
     return None, "missing"
+
+
+def _pair(value, name):
+    """A sidecar pair of numbers (``[a, b]``), or None when the key is absent."""
+    if value is None:
+        return None
+    try:
+        a, b = (float(v) for v in value)
+    except (TypeError, ValueError):
+        raise SystemExit(f"sidecar {name} must be a pair of numbers [width, length] in mm, not {value!r}") from None
+    return a, b
 
 
 def _decimals(value) -> int:
@@ -156,6 +174,13 @@ def collect_inputs(args, sidecar: dict | None) -> Inputs:
     inputs["order_sign"] = _first((args.order_sign, "command line"), (side.get("sentido_orden"), "sidecar"),
                                   (1 if sim else None, "simulation (carrier towards +y)"),
                                   (1, "assumed (+1, library default)"))
+    # Measuring face of the block: it places the face centre when the field shows only part of the outline.
+    inputs["face_mm"] = _first((tuple(args.face_mm) if args.face_mm else None, "command line"),
+                               (_pair(side.get("cara_mm"), "cara_mm"), "sidecar"),
+                               (tuple(args.block_size_mm) if sim else None, "simulation setting"))
+    inputs["u_face_mm"] = _first((tuple(args.u_face_mm) if args.u_face_mm else None, "command line"),
+                                 (_pair(side.get("u_cara_mm"), "u_cara_mm"), "sidecar"),
+                                 ((0.0, 0.0), "simulation setting" if sim else "assumed exact"))
     return inputs
 
 
@@ -171,7 +196,8 @@ def simulated_scene(args, inputs: Inputs, wavelength_air: float) -> dict:
     cte, t_block = inputs.value("cte_per_k"), inputs.value("block_temperature_c")
     true_length = inputs.value("nominal_mm") * 1e6 + args.true_dev_nm               # at 20 C, nm
     geometry = SceneGeometry.cs505mu(scale=args.scale, fov_mm=25.0, block_rotation_deg=args.block_rotation_deg,
-                                     block_center_mm=tuple(args.block_centre_mm))
+                                     block_center_mm=tuple(args.block_centre_mm),
+                                     block_width_mm=args.block_size_mm[0], block_height_mm=args.block_size_mm[1])
     model = PhaseModel(wavelength_nm=wavelength_air, central_length_nm=true_length * (1 + cte * (t_block - 20.0)),
                        fringes_y=args.fringes_y, fringes_x=1.0)
     sims = [synthesize_interferogram(geometry, model, sensor=SensorModel.cs505mu(), seed=k)
@@ -179,10 +205,13 @@ def simulated_scene(args, inputs: Inputs, wavelength_air: float) -> dict:
     mask = sims[0].block_mask
     height, width = mask.shape
     eval_row = args.eval_row if args.eval_row is not None else height // 2
+    pixel_mm = 25.0 / (width - 1)
+    offset_x, offset_y = args.block_centre_mm
+    centre = ((height - 1) / 2 + offset_y / pixel_mm, (width - 1) / 2 + offset_x / pixel_mm)
     return {"source": f"simulated CS505MU scene, scale {args.scale}, {args.frames} frames",
-            "frames": [s.image.astype(float) for s in sims], "eval_row": eval_row, "face_centre_x": None,
-            "pixel_mm": 25.0 / (width - 1), "mask": mask,
-            "truth": {"fraction": sims[0].fraction_truth, "length_nm": true_length}}
+            "frames": [s.image.astype(float) for s in sims], "eval_row": eval_row,
+            "pixel_mm": pixel_mm, "mask": mask,
+            "truth": {"fraction": sims[0].fraction_truth, "length_nm": true_length, "centre": centre}}
 
 
 def real_series(args, folder: Path) -> dict:
@@ -193,18 +222,22 @@ def real_series(args, folder: Path) -> dict:
     frames = [load_image(p).astype(float) for p in files]
     eval_row = args.eval_row if args.eval_row is not None else BENCH_EVAL_ROW
     return {"source": f"series {folder.name}, {len(frames)} frames", "frames": frames, "eval_row": eval_row,
-            "face_centre_x": args.face_centre_x, "pixel_mm": args.pixel_mm, "mask": None, "truth": None}
+            "pixel_mm": args.pixel_mm, "mask": None, "truth": None}
 
 
-def normalise_scene(args, scene: dict, platen_side: str, notes: list) -> dict:
+def normalise_scene(args, scene: dict, inputs: Inputs, notes: list) -> dict:
     """Find the block and normalise every frame: edge vertical, platen on the left.
 
     :func:`interflib.fringe.geometry.locate_block` on the mean frame; if it fails (too few
     fringes for the demodulation), or with ``--edge-x``/``--edge-search``, the edge is
     located as in the 2026-10 campaign (dark line, platen strip on the left) after
     mirroring the frames when the platen is on the right.
+
+    When the centre of the face is placed (:func:`_face_centre`), the evaluation row moves
+    to it and the edge is taken at that row.
     """
     frames, eval_row = scene["frames"], scene["eval_row"]
+    platen_side = inputs.value("platen_side")
     mean = np.mean(frames, axis=0)
     width = mean.shape[1]
     mirror = platen_side == "right"
@@ -240,19 +273,60 @@ def normalise_scene(args, scene: dict, platen_side: str, notes: list) -> dict:
             info["edge_search"] = list(search)
         info.update(method="bench heuristic (platen strip on the left)", mirrored=mirror)
         zone = None
-    face_centre_x = scene.get("face_centre_x")
-    if face_centre_x is not None:
-        face_centre_x = float(to_norm(eval_row, face_centre_x)[1])
-    truth_edge = None
+    centre = _face_centre(args, geo, to_norm, eval_row, scene.get("pixel_mm"), inputs, notes)
+    height = frames[0].shape[0]
+    if centre is not None and not HALF_WINDOW <= centre["y"] < height - HALF_WINDOW:
+        notes.append(f"the face centre at row {centre['y']:.0f} leaves no room for the fit window; F is read at the "
+                     "evaluation row")
+        centre = None
+    if centre is not None and centre["source"] != "manual column":
+        eval_row = int(round(centre["y"]))
+        if geo is not None:
+            edge_x = geo.edge_x_at(eval_row)
+    truth_edge = truth_centre = None
     if scene.get("mask") is not None:
         mask = geo.normalise(scene["mask"].astype(float)) > 0.5 if geo is not None else \
             (scene["mask"][:, ::-1] if mirror else scene["mask"])
         cols = np.flatnonzero(mask[eval_row])
         if cols.size:
             truth_edge = float(cols[0]) - 0.5
-            face_centre_x = float(cols.mean())
-    return {**scene, "frames": frames, "edge_x": float(edge_x), "edge_origin": origin, "face_centre_x": face_centre_x,
-            "geometry": info, "zone": zone, "truth_edge_x": truth_edge}
+        truth_centre = [float(v) for v in to_norm(*scene["truth"]["centre"])]
+    return {**scene, "frames": frames, "eval_row": eval_row, "edge_x": float(edge_x), "edge_origin": origin,
+            "face_centre": centre, "geometry": info, "zone": zone, "truth_edge_x": truth_edge,
+            "truth_centre": truth_centre}
+
+
+def _face_centre(args, geo, to_norm, eval_row, pixel_mm, inputs, notes):
+    """Centre of the measuring face in the normalised frames, as a dict, or None.
+
+    With ``geo`` (the general detection), :func:`interflib.fringe.geometry.locate_face_centre`
+    places it from the outline, from the outline and the face dimensions (``--face-mm`` or
+    the sidecar), or from ``--face-centre``.
+    With the bench heuristic only a centre given by hand is possible. ``--face-centre-x``
+    gives a column only: ``F`` is then extended to it at the evaluation row, as before.
+    """
+    nan = float("nan")
+    u_manual = args.u_face_centre_px
+    if args.face_centre is None and args.face_centre_x is not None:
+        y, x = to_norm(eval_row, args.face_centre_x)
+        return {"y": float(y), "x": float(x), "u_y": nan, "u_x": nan if u_manual is None else float(u_manual),
+                "source": "manual column", "scale_px_per_mm": nan, "scale_source": "none", "features": {},
+                "aspect": (nan, nan), "notes": ()}
+    manual = tuple(args.face_centre) if args.face_centre is not None else None
+    if geo is None:
+        if manual is None:
+            return None
+        y, x = to_norm(*manual)
+        u = nan if u_manual is None else float(u_manual)
+        return {"y": float(y), "x": float(x), "u_y": u, "u_x": u, "source": "manual", "scale_px_per_mm": nan,
+                "scale_source": "none", "features": {}, "aspect": (nan, nan), "notes": ()}
+    try:
+        face = locate_face_centre(geo, face_mm=inputs.value("face_mm"), u_face_mm=inputs.value("u_face_mm"),
+                                  pixel_mm=pixel_mm, manual=manual, u_manual_px=u_manual)
+    except ValueError as exc:
+        notes.append(f"face centre not located: {exc}")
+        return None
+    return {**dataclasses.asdict(face), "face_mm": inputs.value("face_mm")}
 
 
 def _search_from_platen(img):
@@ -326,19 +400,21 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     per_frame = _wrap(per_frame, reference) if per_frame else np.array([])
     s_frame = float(np.std(per_frame, ddof=1)) if per_frame.size > 1 else float("nan")
     u_mean = s_frame / math.sqrt(per_frame.size) if per_frame.size > 1 else float("nan")
-    # --- F at the face centre: both side lines extended to x_c (exact for straight lines)
-    x_c = scene.get("face_centre_x")
+    # --- F at the face centre: both side lines extended to x_c (exact for straight lines), at
+    # the row of the centre (the evaluation row moved there)
+    centre = scene.get("face_centre")
+    x_c = centre["x"] if centre else None
+    g_x = order_sign * (primary.slope_block - primary.slope_platen)          # fringe/px
     if x_c is not None:
-        shift = order_sign * (primary.slope_block - primary.slope_platen) * (x_c - edge_x)
-        fraction_used, where = float((primary.fraction + shift) % 1.0), "face centre column"
+        shift = g_x * (x_c - edge_x)
+        fraction_used = float((primary.fraction + shift) % 1.0)
+        where = "face centre column" if centre["source"] == "manual column" else "face centre"
     else:
         shift, fraction_used, where = None, primary.fraction, "edge column"
 
     # --- sensitivity to the bands in the side fits, where F is used: a model error of the lines
     choice = span_sensitivity(primary.platen, primary.block, edge_x, eval_row, at_x=x_c, order_sign=order_sign)
     u_extrap, u_bands = primary.fraction_error, choice.model_error
-    parts = [u for u in (u_extrap, u_mean, u_bands) if np.isfinite(u)]
-    u_fraction = float(math.sqrt(sum(u * u for u in parts))) if parts else float("nan")
 
     # --- image quality: saturation, visibility per side, band fits, wedge
     max_adu = 2 ** args.bit_depth - 1
@@ -362,6 +438,14 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
         wedge = None
         notes.append(f"wedge: the measurement failed ({exc})")
 
+    # --- position of the centre: F changes across the face with the wedge
+    u_centre = float("nan")
+    if centre:
+        g_y = wedge.wedge_y if wedge else float("nan")
+        u_centre = float(math.hypot(g_x * centre["u_x"], g_y * centre["u_y"]))
+    parts = [u for u in (u_extrap, u_mean, u_bands, u_centre) if np.isfinite(u)]
+    u_fraction = float(math.sqrt(sum(u * u for u in parts))) if parts else float("nan")
+
     # --- geometry checks: band areas inside the fringe zone, fit window on the face
     zone = scene.get("zone")
     if zone is not None:
@@ -371,12 +455,12 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     if face_rows:
         geometry["fit_window_on_face"] = bool(face_rows[0] <= rows[0] and rows[1] <= face_rows[1])
     if artifacts is not None:
-        artifacts.update(image=img, primary=primary, rows=rows, fft_rows=fft_rows, face_centre_x=x_c,
+        artifacts.update(image=img, primary=primary, rows=rows, fft_rows=fft_rows, face_centre=centre,
                          edge_search=geometry.get("edge_search"), face_rows=face_rows, geometry=geometry)
     return {
         "image": {"source": scene["source"], "size_px": [height, width], "frames": len(frames),
                   "edge_x_px": edge_x, "edge_origin": scene["edge_origin"], "eval_row_px": eval_row,
-                  "geometry": geometry, "fringe_motion_between_frames": motion,
+                  "geometry": geometry, "face_centre": centre, "fringe_motion_between_frames": motion,
                   "fit_rows": list(rows), "fourier_rows": list(fft_rows), "period_px": period,
                   "fringes_in_fit_window": (rows[1] - rows[0]) / period, "saturated_fraction": saturated,
                   "visibility_platen": visibility["platen"], "visibility_block": visibility["block"],
@@ -393,7 +477,8 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
                      "u_mean_of_frames": u_mean, "u_extrapolation": u_extrap,
                      "band_variants": {f"{gap}-{span}": float(f) for (gap, span), f in zip(choice.variants, choice.fraction,
                                                                                           strict=True)},
-                     "band_deviation": choice.deviation, "u_band_choice": u_bands, "u_fraction": u_fraction,
+                     "band_deviation": choice.deviation, "u_band_choice": u_bands,
+                     "u_centre_position": u_centre, "u_fraction": u_fraction,
                      "edge_fraction": primary.fraction, "face_centre_x_px": x_c,
                      "shift_edge_to_centre": shift, "fraction_used": fraction_used, "evaluated_at": where},
     }
@@ -420,7 +505,7 @@ def run(args, artifacts=None) -> dict:
     notes += [f"air index: {w.message}" for w in caught]
 
     scene = simulated_scene(args, inputs, wavelength_air) if folder is None else real_series(args, folder)
-    scene = normalise_scene(args, scene, inputs.value("platen_side"), notes)
+    scene = normalise_scene(args, scene, inputs, notes)
     measured = measure(args, scene, inputs, wavelength_air, notes, artifacts)
     frac = measured["fraction"]
 
@@ -474,7 +559,11 @@ def run(args, artifacts=None) -> dict:
         summary["truth"] = {"fraction": truth["fraction"], "length_20c_nm": truth["length_nm"],
                             "fraction_error": float(_wrap(frac["fraction_used"], truth["fraction"]) - truth["fraction"]),
                             "length_error_nm": solution.length - truth["length_nm"],
-                            "edge_x_px": scene.get("truth_edge_x")}
+                            "edge_x_px": scene.get("truth_edge_x"), "centre_yx_px": scene.get("truth_centre")}
+        centre = measured["image"]["face_centre"]
+        if centre and scene.get("truth_centre"):
+            summary["truth"]["centre_error_yx_px"] = [centre["y"] - scene["truth_centre"][0],
+                                                      centre["x"] - scene["truth_centre"][1]]
     summary["warnings"] = notes + _warnings(summary, inputs)
     return summary
 
@@ -568,13 +657,34 @@ def _warnings(summary, inputs: Inputs) -> list:
                    "prior is not reliable")
     out.append("the nominal prior gives the right order only if the true deviation is within a quarter wave "
                f"({summary['order']['quarter_wave_nm']:.0f} nm)")
+    centre = img.get("face_centre")
     if frac["evaluated_at"] == "edge column":
         out.append("F is evaluated at the edge column, not at the face centre where the central length is "
-                   "defined; give --face-centre-x to extend both sides to the centre (the block-platen wedge "
-                   "makes the two differ)")
+                   "defined (the block-platen wedge makes the two differ): the outline of the face is incomplete; "
+                   "give the face dimensions (--face-mm) or the centre (--face-centre)")
     else:
         out.append("F at the face centre extends the side lines beyond the measured bands; u(F) includes how the "
                    "choice of bands moves it there, but not the scatter of that extension")
+    if centre:
+        if centre["source"] == "outline and dimensions":
+            width, length = centre["face_mm"]
+            origin = inputs["face_mm"][1]
+            out.append(f"the face centre rests on the declared face dimensions {width:g} x {length:g} mm ({origin}); "
+                       "with dimensions not measured on the block it is only as good as they are")
+            if inputs["u_face_mm"][1] == "assumed exact":
+                out.append("the face dimensions have no uncertainty (u_cara_mm in the sidecar or --u-face-mm): "
+                           "u(F) leaves it out")
+        elif centre["source"] == "manual column":
+            out.append("--face-centre-x moves F to that column at the evaluation row, not to the row of the face "
+                       "centre; give --face-centre Y X or the face dimensions")
+        out += [f"face centre: {note}" for note in centre["notes"]]
+        if not np.isfinite(frac["u_centre_position"]):
+            out.append("the position of the face centre has no uncertainty (give --u-face-centre-px for a manual "
+                       "centre): u(F) leaves it out")
+        measured_aspect, expected_aspect = centre["aspect"]
+        if np.isfinite(measured_aspect) and abs(measured_aspect / expected_aspect - 1) > ASPECT_WARN:
+            out.append(f"the outline gives a length-to-width ratio of {measured_aspect:.3f} against "
+                       f"{expected_aspect:.3f} from the declared dimensions: a feature or a dimension is wrong")
     if not np.isfinite(frac["u_extrapolation"]):
         out.append(f"the {frac['primary_method']} reader gives no extrapolation uncertainty; u(F) is the "
                    "repeatability only")
@@ -599,9 +709,12 @@ def format_summary(s: dict) -> str:
                f"F contribution u = {_fmt(length['u_from_fraction_nm'], '.2f')} nm)")
     out.append("\nInputs")
     units = {"nominal_mm": "mm", "wavelength_vac_nm": "nm", "air_temperature_c": "C", "pressure_pa": "Pa",
-             "humidity_pct": "%", "block_temperature_c": "C", "cte_per_k": "1/K", "platen_side": "", "order_sign": ""}
+             "humidity_pct": "%", "block_temperature_c": "C", "cte_per_k": "1/K", "platen_side": "", "order_sign": "",
+             "face_mm": "mm", "u_face_mm": "mm"}
     for name, item in s["inputs"].items():
-        out.append(f"  {name:<22}{_fmt(item['value'], 'g'):>12} {units[name]:<4} [{item['origin']}]")
+        value = item["value"]
+        shown = " x ".join(f"{v:g}" for v in value) if isinstance(value, tuple) else _fmt(value, "g")
+        out.append(f"  {name:<22}{shown:>12} {units[name]:<4} [{item['origin']}]")
     air = s["air"]
     out.append(f"\nAir            n - 1 = {air['n_minus_1']:.4e}   lambda_air = {air['wavelength_air_nm']:.5f} nm")
     img = s["image"]
@@ -618,6 +731,15 @@ def format_summary(s: dict) -> str:
         out.append(f"  widths        platen {geo['platen_width_px']:.0f} px, face {geo['face_width_px']:.0f} px; "
                    f"face with fringes in rows {geo['face_rows'][0]}-{geo['face_rows'][1]}")
     out.append(f"  edge          x = {img['edge_x_px']:.2f} px ({img['edge_origin']}); evaluation row {img['eval_row_px']}")
+    centre = img.get("face_centre")
+    if centre:
+        scale = (f"; scale {centre['scale_px_per_mm']:.2f} px/mm ({centre['scale_source']})"
+                 if np.isfinite(centre["scale_px_per_mm"]) else "")
+        out.append(f"  face centre   y = {centre['y']:.1f}, x = {centre['x']:.1f} px (u {_fmt(centre['u_y'], '.1f')}, "
+                   f"{_fmt(centre['u_x'], '.1f')} px) from the {centre['source']}{scale}")
+        if centre["features"]:
+            found = ", ".join(f"{name} {value:.1f} ({origin})" for name, (value, origin) in centre["features"].items())
+            out.append(f"  outline       {found}")
     out.append(f"  fringes       period {img['period_px']:.2f} px; {img['fringes_in_fit_window']:.1f} fringes "
                f"in the fit window {img['fit_rows']}")
     out.append(f"  visibility    platen {img['visibility_platen']:.2f}, block {img['visibility_block']:.2f}; "
@@ -645,6 +767,9 @@ def format_summary(s: dict) -> str:
     variants = ", ".join(f"{name} {f % 1.0:.4f}" for name, f in frac["band_variants"].items())
     out.append(f"  band choice   gap-span px: {variants}; u_m(F) = {frac['u_band_choice']:.4f} "
                f"({frac['u_band_choice'] * s['air']['half_wavelength_nm']:.1f} nm)")
+    if centre:
+        out.append(f"  centre        u_c(F) = {_fmt(frac['u_centre_position'])} "
+                   f"({_fmt(frac['u_centre_position'] * s['air']['half_wavelength_nm'], '.1f')} nm) from its position")
     out.append(f"  F used = {frac['fraction_used']:.4f} at the {frac['evaluated_at']}, u(F) = {_fmt(frac['u_fraction'])}")
     order = s["order"]
     out.append(f"\nInteger order  kappa = {order['integer_order']}, nominal fraction F' = {order['nominal_fraction']:.4f}, "
@@ -667,6 +792,10 @@ def format_summary(s: dict) -> str:
                    f"error F {t['fraction_error']:+.4f}, L {t['length_error_nm']:+.2f} nm")
         if t.get("edge_x_px") is not None:
             out.append(f"               edge from the mask {t['edge_x_px']:.2f} px (found {img['edge_x_px']:.2f} px)")
+        if t.get("centre_error_yx_px") is not None:
+            dy, dx = t["centre_error_yx_px"]
+            out.append(f"               face centre {t['centre_yx_px'][0]:.1f}, {t['centre_yx_px'][1]:.1f} px; "
+                       f"error {dy:+.2f}, {dx:+.2f} px")
     out.append("\nWarnings")
     out += [f"  - {w}" for w in s["warnings"]] or ["  none"]
     out.append(line)
@@ -751,9 +880,12 @@ def plot_regions(path, summary: dict, data: dict) -> None:
                                 fc=FOURIER_COLOUR, alpha=0.25, ec="none", label="columns for the period"))
     ax_zoom.axvline(x_e, color=EDGE_COLOUR, lw=1.2, label="edge")
     ax_zoom.axhline(y_e, color="w", lw=0.8, ls=":", label=f"evaluation row {y_e}")
-    if data.get("face_centre_x") is not None:
-        ax_zoom.axvline(data["face_centre_x"], color="w", lw=1.0, ls="-.",
-                        label=f"face centre x = {data['face_centre_x']:.1f}")
+    centre = data.get("face_centre")
+    if centre is not None:
+        ax_zoom.axvline(centre["x"], color="w", lw=1.0, ls="-.", label=f"face centre x = {centre['x']:.1f}")
+        ax_frame.plot(centre["x"], centre["y"], "*", ms=12, mfc=BLOCK_COLOUR, mec="w",
+                      label=f"face centre ({centre['source']})")
+        ax_frame.legend(fontsize=7, loc="lower left", framealpha=0.85)
     ax_zoom.set_xlim(*zx)
     ax_zoom.set_ylim(zy[1], zy[0])
     ax_zoom.set_title(f"(b) areas around the edge\nfit window rows {rows[0]}-{rows[1]}")
@@ -805,7 +937,16 @@ def parse_args(argv=None):
     ap.add_argument("--eval-row", type=int, help="evaluation row (bench default 1050; simulated: centre)")
     ap.add_argument("--edge-x", type=float, help="edge column, px (default: located on the image)")
     ap.add_argument("--edge-search", type=int, nargs=2, metavar=("X0", "X1"), help="columns searched for the edge")
-    ap.add_argument("--face-centre-x", type=float, help="column of the face centre, px, to evaluate F there")
+    ap.add_argument("--face-mm", type=float, nargs=2, metavar=("WIDTH", "LENGTH"),
+                    help="measuring face, mm: width across the edge and length along it; with part of the outline "
+                         "it places the face centre (sidecar: cara_mm)")
+    ap.add_argument("--u-face-mm", type=float, nargs=2, metavar=("U_WIDTH", "U_LENGTH"),
+                    help="standard uncertainties of the face dimensions, mm (sidecar: u_cara_mm; default 0)")
+    ap.add_argument("--face-centre", type=float, nargs=2, metavar=("Y", "X"),
+                    help="face centre given by hand, input image px (overrides the detection)")
+    ap.add_argument("--u-face-centre-px", type=float, help="standard uncertainty of --face-centre on each axis, px")
+    ap.add_argument("--face-centre-x", type=float,
+                    help="column of the face centre, px: F extended to it at the evaluation row (prefer --face-centre)")
     ap.add_argument("--pixel-mm", type=float, help="pixel size on the object, mm (wedge in microradians)")
     ap.add_argument("--prior-dev-nm", type=float, help="prior deviation from nominal for MEFM, nm")
     ap.add_argument("--prior-U-nm", type=float,
@@ -823,6 +964,8 @@ def parse_args(argv=None):
     sim.add_argument("--block-rotation-deg", type=float, default=0.0, help="in-plane rotation of the block, deg")
     sim.add_argument("--block-centre-mm", type=float, nargs=2, default=(0.0, 0.0), metavar=("X", "Y"),
                      help="offset of the block from the frame centre, mm")
+    sim.add_argument("--block-size-mm", type=float, nargs=2, default=(9.0, 35.0), metavar=("WIDTH", "LENGTH"),
+                     help="measuring face of the simulated block, mm (default 9 x 35: its ends are out of the field)")
     return ap.parse_args(argv)
 
 

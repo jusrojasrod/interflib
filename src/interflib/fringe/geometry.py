@@ -33,6 +33,19 @@ position and angle. The **dark line** that the chamfer draws along the edge conf
 
 With few fringes in the field the demodulation, and therefore this function, fails
 (``ValueError``).
+
+The central length of a gauge block is defined at the centre of its free measuring face (ISO
+3650:1998, clause 3). :func:`locate_block` also looks for the rest of the face outline: the
+**far edge** (the lateral edge opposite the platen, with the same order of preference as the
+edge: phase-step line confirmed by the dark line, dark line, phase-step line; else the end of
+the lit field, which may be the border of the beam) and the **ends** of the face (horizontal
+lines of phase steps across the face that the platen strip does not share at the same row,
+with fringes on both sides). :func:`locate_face_centre` then places the centre:
+
+- from the whole outline (both lateral edges and both ends);
+- from part of it and the face dimensions in mm (each axis with both features uses their
+  midpoint; with one, the feature plus half the dimension times the scale);
+- from coordinates given by hand, as the last resort.
 """
 from dataclasses import dataclass
 
@@ -60,6 +73,27 @@ DARK_LINE_DEPTH = 0.25     # and is this much darker than the profile 10-20 px o
                            # below 0.06 along stray phase-step lines)
 DARK_SLAB_ROWS = 100       # bands of rows in which the dark line is followed to check the edge angle,
 DARK_FOLLOW_ROWS = 400     # over this many rows on either side of the reference row
+FACE_INSET = 60            # px: strips on the face and the platen start this far from the edges
+END_PROMINENCE = 0.5       # rad: a block end is a peak of the face-strip phase-step profile at least
+                           # this prominent divided by the fringe period in px (the peak falls as the
+                           # period grows: 0.17-0.38 at the ends of the 2026-10 bench frames, periods
+                           # 37-47 px; 0.06 to 0.01 on simulated ends, F = 0.25, periods 35 to 128 px)
+END_PLATEN_RATIO = 0.5     # and the platen strip, at the same rows, steps less than this fraction of
+                           # it (0.03-0.18 at the bench ends, up to 0.38 on simulated ones with wide
+                           # fringes; 0.69 and more at the beam borders, which cross the platen too)
+END_MODULATION = 0.015     # and the face has fringes one period above and below it: modulation of at
+                           # least this fraction of its 95th percentile (0.025 and more at the ends;
+                           # 0.007 at the beam borders in the dark)
+FIELD_BORDER_LEVEL = 0.5   # the lit field ends where the face profile falls below this fraction of
+FIELD_BORDER_RUN = 15      # its level near the edge, for at least this many px (a dark line is narrower)
+FEATURE_U_PX = 2.0         # px: standard uncertainty of each outline feature (working assumption,
+                           # not yet validated on real blocks; simulated edges within 0.3 px)
+FAR_EDGE_SCALE_TOL = 0.05  # a far edge without the dark line is used with the dimensions only if the face width
+                           # it gives is within this fraction of the declared pixel size (2026-10 bench: 17.7-18.2
+                           # um/px with confirmed edges; 19.9-30 um/px where the beam clips the block)
+END_U_PERIODS = 0.05       # and of each end, at least this fraction of the fringe period (the
+                           # demodulation blurs the ends along the fringes: simulated centre rows off
+                           # by 1.4 px at a 35 px period and by up to 3.6 px at 86-128 px)
 
 
 @dataclass
@@ -105,6 +139,20 @@ class BlockGeometry:
         ``(g_x, g_y)`` of the input image, fringes per px.
     centre : tuple of float
         ``(y, x)`` centre of the rotation, input pixels.
+    eval_row : float
+        Reference row at which ``edge_x`` and ``far_edge_x`` are given, px.
+    edge_slope : float
+        ``dx/dy`` of the edge in the normalised image (not zero when the edge was left
+        unrotated, below ``min_angle_deg``).
+    far_edge_x : float
+        Far lateral edge of the face (opposite the platen) at ``eval_row``, px; ``nan`` if
+        not found.
+    far_edge_source : str
+        ``"phase step and dark line"``, ``"dark line"`` or ``"phase step"`` (as for the
+        edge), ``"field border"`` (the end of the lit field: it may be the border of the
+        beam, not of the block) or ``"none"``.
+    face_ends : tuple of float
+        ``(top, bottom)`` rows of the ends of the face, px; ``nan`` for an end not found.
     """
 
     image: np.ndarray
@@ -123,10 +171,19 @@ class BlockGeometry:
     zone: np.ndarray
     carrier: tuple
     centre: tuple
+    eval_row: float
+    edge_slope: float
+    far_edge_x: float
+    far_edge_source: str
+    face_ends: tuple
 
     def to_normalised(self, y, x):
         """Map an input pixel ``(y, x)`` to the normalised image."""
         return _forward(y, x, np.radians(self.rotation_deg), self.centre, self.image.shape[1], self.mirrored)
+
+    def edge_x_at(self, y):
+        """Edge column at row ``y`` of the normalised image, px."""
+        return self.edge_x + self.edge_slope * (y - self.eval_row)
 
     def normalise(self, img):
         """Apply the same rotation and mirroring to another frame of the series."""
@@ -383,7 +440,7 @@ def locate_block(img, platen_side="left", row_span=None, eval_row=None, min_angl
     mirrored = platen_side == "right"
     norm = _transform(img, theta, centre, mirrored)
     if theta != 0.0 or mirrored:
-        _, zone, step, y_ref, lines = _detect(norm, "left", row_span)
+        phase_map, zone, step, y_ref, lines = _detect(norm, "left", row_span)
         y_c = y_ref if eval_row is None else eval_row
         choice = _choose_edge(norm, zone, lines, "left", y_c, period)
     phase_line, (a, b), depth, source = choice
@@ -405,14 +462,23 @@ def locate_block(img, platen_side="left", row_span=None, eval_row=None, min_angl
         if x_line > edge_x + 2 * BORDER_MARGIN:
             face_end = min(face_end, x_line)
     face_width = face_end - edge_x
-    face_rows = _face_rows(step, zone, edge_x, y_e, 1.0 / max(abs(carrier[1]), 1e-6))
+    period_y = 1.0 / max(abs(carrier[1]), 1e-6)
+    face_rows = _face_rows(step, zone, edge_x, y_e, period_y)
+
+    # The rest of the outline: far edge and ends of the face.
+    half = int(min(DARK_FOLLOW_ROWS, max(200, 3 * period)))
+    rows = (max(0, y_e - half), min(height, y_e + half))
+    far_x, far_source = _far_edge(norm, lines, a, b, y_e, rows, period)
+    x1 = far_x - FACE_INSET if np.isfinite(far_x) else edge_x + face_width - 20
+    face_ends = _face_ends(phase_map, step, edge_x, x1, y_e, period_y)
     return BlockGeometry(image=norm, edge_x=edge_x, edge_x_phase=edge_phase, refined_by_dark_line=source != "phase step",
                          edge_source=source, dark_line_depth=float(depth),
                          angle_deg=float(np.degrees(angle)), rotation_deg=float(np.degrees(theta)),
                          mirrored=mirrored, support=float(support),
                          platen_width_px=float(platen_width), face_width_px=float(face_width),
                          face_rows=face_rows, zone=zone, carrier=carrier,
-                         centre=centre)
+                         centre=centre, eval_row=float(y_e), edge_slope=float(b),
+                         far_edge_x=float(far_x), far_edge_source=far_source, face_ends=face_ends)
 
 
 def _dark_line_across(img, a, b, rows, reach):
@@ -461,3 +527,258 @@ def _face_rows(step, zone, edge_x, y_e, period, inset=(60, 160)):
     if below.size:
         bottom = int(below.min()) - guard
     return int(top), int(bottom + 1)
+
+
+def _profile_along(img, a, b, rows, k0):
+    # Mean of the image along lines parallel to the edge x = a + b y, over ``rows``, at the
+    # offsets k >= k0 px to its right that stay inside the image: (k, profile).
+    y = np.arange(*rows, dtype=float)
+    k1 = int(np.floor(img.shape[1] - 1 - (a + b * y).max()))
+    if k1 <= k0 + 2:
+        return np.array([]), np.array([])
+    k = np.arange(k0, k1 + 1, dtype=float)
+    x = a + b * y[:, None] + k[None, :]
+    samples = map_coordinates(img, [np.broadcast_to(y[:, None], x.shape), x], order=1)
+    return k, np.convolve(samples.mean(axis=0), np.ones(3) / 3, "same")
+
+
+def _field_border(k, profile):
+    # Offset at which the lit field ends: the profile falls below FIELD_BORDER_LEVEL of its
+    # level near the edge and stays there for FIELD_BORDER_RUN px (nan if it never does).
+    if profile.size < 100 + FIELD_BORDER_RUN:
+        return float("nan")
+    threshold = FIELD_BORDER_LEVEL * np.median(profile[:100])
+    low = (profile < threshold).astype(int)
+    starts = np.flatnonzero(np.convolve(low, np.ones(FIELD_BORDER_RUN, dtype=int), "valid") == FIELD_BORDER_RUN)
+    if starts.size == 0:
+        return float("nan")
+    i = int(starts[0])
+    if i == 0:
+        return float(k[0])
+    return float(k[i - 1] + (profile[i - 1] - threshold) / (profile[i - 1] - profile[i]))
+
+
+def _far_edge(img, lines, a, b, y_e, rows, period):
+    # Far lateral edge of the face at y_e, with the order of preference of the edge itself:
+    # a phase-step line with the dark chamfer line, the dark line alone, a phase-step line;
+    # else the end of the lit field. Only features inside the lit field compete.
+    # Returns (x, source), or (nan, "none").
+    edge_x = a + b * y_e
+    k, profile = _profile_along(img, a, b, rows, 2 * BORDER_MARGIN)
+    if profile.size == 0:
+        return float("nan"), "none"
+    border = _field_border(k, profile)
+    limit = border if np.isfinite(border) else np.inf
+    reach = max(REFINE_PX, REFINE_PERIODS * period)
+    beyond = sorted(((la, lb) for la, lb, _ in lines if k[0] < la + lb * y_e - edge_x < limit),
+                    key=lambda line: line[0] + line[1] * y_e)
+    for la, lb in beyond:
+        offset, depth = _dark_line_across(img, la, lb, rows, reach)
+        if depth >= DARK_LINE_DEPTH:
+            return float(la + lb * y_e + offset), "phase step and dark line"
+    for c in argrelmin(profile, order=3)[0]:
+        if k[c] < limit - 10 and _depth(profile, c) >= DARK_LINE_DEPTH:
+            return float(edge_x + k[c] + parabolic_vertex(*profile[c - 1:c + 2])), "dark line"
+    if beyond:
+        la, lb = beyond[0]
+        return float(la + lb * y_e), "phase step"
+    if np.isfinite(border):
+        return float(edge_x + border), "field border"
+    return float("nan"), "none"
+
+
+def _face_ends(phase_map, step, edge_x, x1, y_e, period):
+    # Rows (top, bottom) of the ends of the face: peaks of the phase-step profile of a strip
+    # of the face, from FACE_INSET px right of the edge to x1, that the platen strip (100 px
+    # wide, FACE_INSET px left of the edge) does not share within one period (the border of
+    # the beam crosses both), with fringes one period above and below. nan when not found.
+    nan = float("nan")
+    x0, x1 = int(round(edge_x + FACE_INSET)), int(round(min(x1, step.shape[1])))
+    if x1 - x0 < 20:
+        return nan, nan
+    face = uniform_filter1d(step[:, x0:x1].mean(axis=1), 9)
+    p1 = int(round(edge_x - FACE_INSET))
+    p0 = max(0, p1 - 100)
+    platen = uniform_filter1d(step[:, p0:p1].mean(axis=1), 9) if p1 - p0 >= 20 else None
+    modulation = phase_map.modulation
+    fringes = uniform_filter1d(np.nanmean(modulation[:, x0:x1], axis=1), 9)
+    floor = END_MODULATION * np.nanpercentile(modulation, 95)
+    guard = int(np.ceil(period))
+    peaks, _ = find_peaks(face, prominence=END_PROMINENCE / period)
+    ends = []
+    for p in peaks:
+        lo, hi = max(0, p - guard), min(len(face) - 1, p + guard)
+        if platen is not None and platen[lo:hi + 1].max() > END_PLATEN_RATIO * face[p]:
+            continue
+        if min(fringes[lo], fringes[hi]) < floor:
+            continue
+        ends.append(p + (parabolic_vertex(*face[p - 1:p + 2]) if 0 < p < len(face) - 1 else 0.0))
+    ends = np.asarray(ends, dtype=float)
+    above, below = ends[ends < y_e], ends[ends > y_e]
+    return (float(above.max()) if above.size else nan, float(below.min()) if below.size else nan)
+
+
+@dataclass
+class FaceCentre:
+    """Centre of the measuring face in the normalised image of a :class:`BlockGeometry`.
+
+    Attributes
+    ----------
+    y, x : float
+        Row and column of the centre, px.
+    u_y, u_x : float
+        Standard uncertainties of ``y`` and ``x``, px (``nan`` for a manual centre given
+        without one).
+    source : str
+        ``"outline"`` (both lateral edges and both ends detected), ``"outline and
+        dimensions"`` (part of the outline and the face dimensions) or ``"manual"``.
+    scale_px_per_mm : float
+        Image scale on the object, px/mm (``nan`` when not used).
+    scale_source : str
+        ``"face width"``, ``"face length"``, ``"pixel size"`` or ``"none"``.
+    features : dict
+        The outline features found, ``name: (px, origin)``.
+    aspect : tuple of float
+        ``(measured, expected)`` length-to-width ratio of the face when the whole outline
+        and the dimensions are known (a check of the features), else ``(nan, nan)``.
+    notes : tuple of str
+        Caveats: a far edge that is only the end of the lit field, a scale taken from the
+        declared pixel size.
+    """
+
+    y: float
+    x: float
+    u_y: float
+    u_x: float
+    source: str
+    scale_px_per_mm: float
+    scale_source: str
+    features: dict
+    aspect: tuple
+    notes: tuple
+
+
+def locate_face_centre(geo, face_mm=None, u_face_mm=(0.0, 0.0), pixel_mm=None, manual=None, u_manual_px=None,
+                       u_feature_px=FEATURE_U_PX):
+    """Place the centre of the measuring face, where the central length is defined.
+
+    The modes, in order: the whole outline found by :func:`locate_block`; part of it with
+    the face dimensions; coordinates given by hand. ``manual`` overrides the other two.
+
+    Parameters
+    ----------
+    geo : BlockGeometry
+        Result of :func:`locate_block`.
+    face_mm : tuple of float, optional
+        ``(width, length)`` of the measuring face, mm: across the edge and along it.
+    u_face_mm : tuple of float
+        Standard uncertainties of ``face_mm``, mm.
+    pixel_mm : float, optional
+        Size of one pixel on the object, mm. Used for the scale only when the outline does
+        not give it (no pair of opposite features), and with the dimensions to check a far
+        edge without the dark line: the end of the lit field is used only if it agrees within
+        ``FAR_EDGE_SCALE_TOL``; an unconfirmed phase-step line is dropped if it disagrees.
+    manual : tuple of float, optional
+        ``(y, x)`` of the centre in the **input** image, px.
+    u_manual_px : float, optional
+        Standard uncertainty of ``manual`` along each axis, px.
+    u_feature_px : float
+        Standard uncertainty of the position of each outline feature, px; for the ends, at
+        least ``END_U_PERIODS`` fringe periods.
+
+    Returns
+    -------
+    FaceCentre
+
+    Raises
+    ------
+    ValueError
+        If the outline is incomplete and no dimensions are given, or if not even the
+        dimensions place the centre (no end of the face visible, no scale).
+    """
+    nan = float("nan")
+    if manual is not None:
+        y, x = (float(v) for v in geo.to_normalised(*manual))
+        u = nan if u_manual_px is None else float(u_manual_px)
+        return FaceCentre(y=y, x=x, u_y=u, u_x=u, source="manual", scale_px_per_mm=nan, scale_source="none",
+                          features={}, aspect=(nan, nan), notes=())
+
+    x_e, x_f = geo.edge_x, geo.far_edge_x
+    y_t, y_b = geo.face_ends
+    u_f = float(u_feature_px)
+    u_end = max(u_f, END_U_PERIODS / max(np.hypot(*geo.carrier), 1e-6))
+    has_far = bool(np.isfinite(x_f))
+    far_confirmed = has_far and geo.far_edge_source != "field border"
+    has_top, has_bottom = bool(np.isfinite(y_t)), bool(np.isfinite(y_b))
+    features = {"edge": (x_e, geo.edge_source)}
+    if has_far:
+        features["far edge"] = (x_f, geo.far_edge_source)
+    if has_top:
+        features["top end"] = (y_t, "phase step")
+    if has_bottom:
+        features["bottom end"] = (y_b, "phase step")
+    notes = []
+    # A far edge without the dark line may lie off the block: the end of the lit field is the
+    # border of the beam when the beam clips the block, and a phase-step line may be stray. With
+    # the dimensions, the width it gives must agree with the declared pixel size; the end of the
+    # lit field is used only then.
+    if has_far and geo.far_edge_source in ("field border", "phase step") and face_mm is not None:
+        what = "the end of the lit field" if geo.far_edge_source == "field border" else "an unconfirmed phase-step line"
+        if pixel_mm:
+            mismatch = (x_f - x_e) / float(face_mm[0]) * float(pixel_mm) - 1.0
+            agrees = abs(mismatch) <= FAR_EDGE_SCALE_TOL
+            notes.append(f"the far edge is {what}; the face width it gives is {100 * mismatch:+.1f} % off the "
+                         f"declared pixel size: {'used' if agrees else 'not used'}")
+        else:
+            agrees = geo.far_edge_source == "phase step"
+            if not agrees:
+                notes.append(f"the far edge is {what}, which may be the border of the beam, and no pixel size "
+                             "confirms it: not used")
+        if not agrees:
+            has_far = far_confirmed = False
+
+    if face_mm is None:
+        if not (far_confirmed and has_top and has_bottom):
+            missing = [name for name, ok in (("far edge", far_confirmed), ("top end", has_top),
+                                             ("bottom end", has_bottom)) if not ok]
+            raise ValueError(f"the outline of the face is incomplete (no {', '.join(missing)}): "
+                             "give the face dimensions or the centre")
+        y, x = (y_t + y_b) / 2, (x_e + x_f) / 2
+        u_y, u_x = u_end / np.sqrt(2), u_f / np.sqrt(2)
+        scale, scale_source, aspect = nan, "none", (nan, nan)
+    else:
+        width, length = (float(v) for v in face_mm)
+        u_width, u_length = (float(v) for v in u_face_mm)
+        if has_far:
+            span, dim, u_dim, u_span, scale_source = x_f - x_e, width, u_width, np.sqrt(2) * u_f, "face width"
+        elif has_top and has_bottom:
+            span, dim, u_dim, u_span, scale_source = y_b - y_t, length, u_length, np.sqrt(2) * u_end, "face length"
+        else:
+            span, scale_source = None, "pixel size"
+        if span is not None:
+            scale = span / dim
+            u_scale = float(np.hypot(u_span / dim, span * u_dim / dim ** 2))
+        elif pixel_mm:
+            scale, u_scale = 1.0 / float(pixel_mm), 0.0
+            notes.append("the scale is the declared pixel size, taken without uncertainty")
+        else:
+            raise ValueError("the outline gives no scale (no pair of opposite features): give pixel_mm")
+        if has_far:
+            x, u_x = (x_e + x_f) / 2, u_f / np.sqrt(2)
+        else:
+            x = x_e + scale * width / 2
+            u_x = float(np.sqrt(u_f ** 2 + (width / 2 * u_scale) ** 2 + (scale / 2 * u_width) ** 2))
+        if has_top and has_bottom:
+            y, u_y = (y_t + y_b) / 2, u_end / np.sqrt(2)
+        elif has_top or has_bottom:
+            y = y_t + scale * length / 2 if has_top else y_b - scale * length / 2
+            u_y = float(np.sqrt(u_end ** 2 + (length / 2 * u_scale) ** 2 + (scale / 2 * u_length) ** 2))
+        else:
+            raise ValueError("no end of the face is visible: the dimensions cannot place the centre along the edge; "
+                             "give the centre")
+        aspect = ((y_b - y_t) / (x_f - x_e), length / width) if has_far and has_top and has_bottom else (nan, nan)
+    source = "outline" if far_confirmed and has_top and has_bottom else "outline and dimensions"
+    x = x + geo.edge_slope * (y - geo.eval_row)             # the lateral edges at the centre row
+    return FaceCentre(y=float(y), x=float(x), u_y=float(u_y), u_x=float(u_x), source=source,
+                      scale_px_per_mm=float(scale), scale_source=scale_source, features=features,
+                      aspect=(float(aspect[0]), float(aspect[1])), notes=tuple(notes))
