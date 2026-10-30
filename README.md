@@ -360,8 +360,16 @@ unconfirmed phase-step line is dropped if it disagrees. In the 2026-10 position 
 and without this check the centre would have moved by up to 325 px. An end of the face is a line of phase
 steps across the face that the platen does not share at the same rows (the border of the beam crosses both), with
 fringes on both sides. The evaluation row moves to the centre, and the uncertainty of the position enters `u(F)`
-through the wedge, `u_c(F)² = (Δg_x·u(x_c))² + (Δg_y·u(y_c))²`. Without a centre, `F` is read at the edge column
-and the summary warns. `--face-centre-x` keeps its earlier meaning: `F` is extended to that column at the
+through the wedge, `u_pos(F)² = (Δg_x·u(x_c))² + (Δg_y·u(y_c))²`. Without a centre, `F` is read at the edge column
+and the summary warns.
+
+At the centre the block phase is measured there: the readers take `at_x`, read the block bands at `x_c ± 75` px
+and interpolate their line at `x_c`. Only the platen line is extended, about 280 px, because the block hides the
+platen. Both phases still refer to one pixel, so the reference tilt still cancels, but the platen is assumed
+straight over the extension. `u(F)` therefore adds a type B bound, `u_ext(F)` (`--u-platen-extension`, 0.065 fringe
+by default). It comes from the one check available on the 2026-10 bench: there the straight platen line missed the
+platen visible above the 2 mm block by that much. With platen on both sides of the block it should be replaced by a
+check in every image. `--face-centre-x` keeps its earlier meaning: `F` is extended to that column at the
 evaluation row.
 
 Without arguments it measures a simulated 2 mm block and also reports the error against the truth. `--series` reads

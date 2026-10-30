@@ -42,7 +42,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .edge_comparison import ColumnPhases, EdgeFractionResult, fraction_at_edge, side_band_centres
+from .edge_comparison import ColumnPhases, EdgeFractionResult, band_centres, compare
 from .models import signed_fraction
 
 
@@ -342,7 +342,8 @@ def column_phases_from_map(phase, x_centres, rows, eval_row, modulation=None, ha
 
 
 def edge_fraction_from_phase(phase, edge_x, rows, eval_row, modulation=None, gap=30, span=180, step=5,
-                             half_width=2, deg_y=1, deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
+                             half_width=2, deg_y=1, deg=1, r2_min=0.3, order_sign=1, at_x=None,
+                             centre_half=None) -> EdgeFractionResult:
     """Fringe fraction at the edge column from a wrapped-phase map (phase stepping).
 
     The same comparison as :func:`interflib.fringe.edge_comparison.edge_fraction`: platen
@@ -375,12 +376,15 @@ def edge_fraction_from_phase(phase, edge_x, rows, eval_row, modulation=None, gap
         ``+1`` when the demodulated phase increases with the interference order (each step
         ``delta_k`` raises the order), ``-1`` otherwise; see
         :func:`interflib.fringe.models.signed_fraction`.
+    at_x, centre_half
+        As in :func:`interflib.fringe.edge_comparison.edge_fraction`: with ``at_x`` the
+        block is read around that column and only the platen line is extended to it.
 
     Returns
     -------
     EdgeFractionResult
     """
-    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
     platen, block = [column_phases_from_map(phase, xs, rows, eval_row, modulation, half_width, deg_y)
                      for xs in (xs_platen, xs_block)]
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    return compare(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign, at_x, centre_half)

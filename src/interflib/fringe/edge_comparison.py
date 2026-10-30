@@ -25,6 +25,14 @@ The lines cross a gap next to the edge where no band is read, so ``F`` rests on 
 phases being straight up to the edge. :func:`span_sensitivity` repeats the comparison
 with other bands; a fraction that moves with them shows that they are not.
 
+The fraction that enters the central length belongs to the centre of the measuring face
+(ISO 3650:1998, clause 3), away from the edge. There the block face is in the image but the
+platen is not, so with ``at_x`` the readers measure the block phase **at that column**
+(bands ``at_x +- centre_half``, the line interpolated at ``at_x``) and extend only the
+platen line to it (:func:`fraction_at_point`). The comparison is still made at one pixel,
+so the common terms still cancel; what remains is that the platen is assumed straight over
+the extension.
+
 Image columns are ``x`` and rows ``y``; fringes are expected to be roughly horizontal
 (spatial carrier along ``y``). The platen is assumed to lie left of the edge and the
 block right of it; mirror the image for the opposite layout.
@@ -111,6 +119,10 @@ class EdgeFractionResult:
     order_sign : int
         Direction of the interference order used for ``fraction`` (``+1``: increasing
         towards ``+y``).
+    at_x : float
+        Column the fraction, the phases and the slopes refer to: ``edge_x`` for the reading
+        at the edge, the point given to :func:`fraction_at_point` otherwise. The block bands
+        then lie around it, and only the platen line is extended.
     """
 
     fraction: float
@@ -124,6 +136,7 @@ class EdgeFractionResult:
     platen: ColumnPhases
     block: ColumnPhases
     order_sign: int = 1
+    at_x: float = float("nan")
 
 
 def _middle_half(n_rows):
@@ -309,7 +322,8 @@ def _value_error(cols: ColumnPhases, x_range, deg, r2_min, at) -> float:
 
 
 def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, step=5,
-                  half_width=2, deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
+                  half_width=2, deg=1, r2_min=0.3, order_sign=1, at_x=None,
+                  centre_half=None) -> EdgeFractionResult:
     """Fringe fraction with block and platen phases compared at the edge column.
 
     The platen is taken left of the edge and the block right of it. Each side uses
@@ -341,15 +355,21 @@ def edge_fraction(img, edge_x, rows, eval_row, period_guess, gap=30, span=180, s
     order_sign : {1, -1}
         ``+1`` when the interference order increases towards ``+y``, ``-1`` when it
         decreases (the fraction is then ``1 - F`` of the ``+1`` reading).
+    at_x : float, optional
+        Column of the block face where the fraction is wanted (its centre). The block bands
+        are then taken around it (:func:`centre_band_centres`) and only the platen line is
+        extended there (:func:`fraction_at_point`). At the edge if omitted.
+    centre_half : int, optional
+        Half-span of the block bands around ``at_x``, px (``CENTRE_HALF`` if omitted).
 
     Returns
     -------
     EdgeFractionResult
     """
-    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
     platen = column_phases(img, xs_platen, rows, eval_row, period_guess, half_width)
     block = column_phases(img, xs_block, rows, eval_row, period_guess, half_width)
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    return compare(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign, at_x, centre_half)
 
 
 def side_band_centres(edge_x, gap, span, step):
@@ -363,6 +383,44 @@ def side_band_centres(edge_x, gap, span, step):
     """
     return (np.arange(edge_x - span, edge_x - gap + 1, step),
             np.arange(edge_x + gap, edge_x + span + 1, step))
+
+
+CENTRE_HALF = 75             # px: half-span of the block bands around the point (the 150 px of the edge bands)
+
+
+def centre_band_centres(at_x, half=CENTRE_HALF, step=5):
+    """Band centre columns of the block around ``at_x``: from ``at_x - half`` to ``at_x + half``."""
+    return np.arange(at_x - half, at_x + half + 1, step)
+
+
+def band_centres(edge_x, gap, span, step, at_x=None, centre_half=None):
+    """Platen and block band centres for a reading at the edge or, with ``at_x``, at a point.
+
+    The platen bands are always those of :func:`side_band_centres`; with ``at_x`` the block
+    bands are :func:`centre_band_centres` instead, which must stay ``gap`` px clear of the
+    edge.
+
+    Raises
+    ------
+    ValueError
+        If the block bands around ``at_x`` come closer than ``gap`` to the edge.
+    """
+    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    if at_x is None:
+        return xs_platen, xs_block
+    half = CENTRE_HALF if centre_half is None else centre_half
+    if at_x - half < edge_x + gap:
+        raise ValueError(f"the block bands around x = {at_x:.1f} come within {gap} px of the edge")
+    return xs_platen, centre_band_centres(at_x, half, step)
+
+
+def compare(platen, block, edge_x, eval_row, gap=30, span=180, deg=1, r2_min=0.3, order_sign=1, at_x=None,
+            centre_half=None) -> EdgeFractionResult:
+    """:func:`fraction_at_edge`, or :func:`fraction_at_point` when ``at_x`` is given."""
+    if at_x is None:
+        return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    half = CENTRE_HALF if centre_half is None else centre_half
+    return fraction_at_point(platen, block, edge_x, at_x, eval_row, gap, span, half, deg, r2_min, order_sign)
 
 
 def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row, gap=30, span=180,
@@ -404,7 +462,55 @@ def fraction_at_edge(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
                               phase_platen=float(phi_p), phase_block=float(phi_b),
                               slope_platen=float(dp / (2 * np.pi)), slope_block=float(db / (2 * np.pi)),
                               edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block,
-                              order_sign=order_sign)
+                              order_sign=order_sign, at_x=float(edge_x))
+
+
+def fraction_at_point(platen: ColumnPhases, block: ColumnPhases, edge_x, at_x, eval_row, gap=30, span=180,
+                      centre_half=CENTRE_HALF, deg=1, r2_min=0.3, order_sign=1) -> EdgeFractionResult:
+    """Compare the block phase measured at ``at_x`` with the platen line extended there.
+
+    The block bands lie around ``at_x`` (``at_x +- centre_half``), so its polynomial is
+    evaluated inside them (an interpolation); the platen polynomial, fitted on the bands
+    from ``gap`` to ``span`` px left of the edge, is extended to ``at_x``. Both phases refer
+    to the same pixel, so every term common to the two surfaces still cancels. The platen
+    is assumed to follow its polynomial over the extension, which is what
+    ``fraction_error`` cannot see: it only carries the scatter of the two fits at ``at_x``.
+
+    Parameters
+    ----------
+    platen : ColumnPhases
+        Column phases left of the edge, referred to ``eval_row``.
+    block : ColumnPhases
+        Column phases of the block around ``at_x``, referred to ``eval_row``.
+    edge_x : float
+        Edge column, px.
+    at_x : float
+        Column of the comparison, px (the face centre).
+    eval_row : float
+        Evaluation row the phases refer to.
+    gap, span : int
+        Platen bands from ``gap`` to ``span`` px left of the edge enter its fit.
+    centre_half : int
+        Block bands from ``at_x - centre_half`` to ``at_x + centre_half`` enter its fit.
+    deg, r2_min, order_sign
+        As in :func:`fraction_at_edge`.
+
+    Returns
+    -------
+    EdgeFractionResult
+        With ``at_x`` set; the phases and the slopes are those at ``at_x``.
+    """
+    sides = (platen, (edge_x - span, edge_x - gap)), (block, (at_x - centre_half, at_x + centre_half))
+    cp, cb = [side_fit(cols, x_range, deg, r2_min) for cols, x_range in sides]
+    phi_p, phi_b = np.polyval(cp, at_x), np.polyval(cb, at_x)
+    dp, db = np.polyval(np.polyder(cp), at_x), np.polyval(np.polyder(cb), at_x)
+    u_p, u_b = [_value_error(cols, x_range, deg, r2_min, at_x) for cols, x_range in sides]
+    return EdgeFractionResult(fraction=signed_fraction(phi_b - phi_p, order_sign),
+                              fraction_error=float(np.hypot(u_p, u_b) / (2 * np.pi)),
+                              phase_platen=float(phi_p), phase_block=float(phi_b),
+                              slope_platen=float(dp / (2 * np.pi)), slope_block=float(db / (2 * np.pi)),
+                              edge_x=float(edge_x), eval_row=float(eval_row), platen=platen, block=block,
+                              order_sign=order_sign, at_x=float(at_x))
 
 
 SPAN_VARIANTS = ((30, 180), (45, 180), (60, 180), (30, 120))   # (gap, span) px; the first is the reading
@@ -440,7 +546,7 @@ class SpanSensitivity:
 
 
 def span_sensitivity(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row, variants=SPAN_VARIANTS,
-                     at_x=None, deg=1, r2_min=0.3, order_sign=1) -> SpanSensitivity:
+                     at_x=None, deg=1, r2_min=0.3, order_sign=1, centre_half=None) -> SpanSensitivity:
     """Repeat the comparison at the edge with other bands and see how far the fraction moves.
 
     The side lines are extrapolated across the ``gap`` next to the edge, where no band is
@@ -466,6 +572,10 @@ def span_sensitivity(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
         face centre) each variant extends its own side lines there.
     deg, r2_min, order_sign
         As in :func:`fraction_at_edge`.
+    centre_half : int, optional
+        Given when ``block`` holds the bands around ``at_x`` (a reading by
+        :func:`fraction_at_point`): the block is then read there as in the reading, and the
+        variants only change the platen bands, the side that is extended.
 
     Returns
     -------
@@ -474,6 +584,10 @@ def span_sensitivity(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
     at = float(edge_x if at_x is None else at_x)
     values = []
     for gap, span in variants:
+        if centre_half is not None:
+            values.append(fraction_at_point(platen, block, edge_x, at, eval_row, gap, span, centre_half, deg, r2_min,
+                                            order_sign).fraction)
+            continue
         res = fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
         values.append(res.fraction + order_sign * (res.slope_block - res.slope_platen) * (at - edge_x))
     values = np.asarray(values)

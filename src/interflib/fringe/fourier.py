@@ -48,10 +48,11 @@ import numpy as np
 from scipy.signal.windows import tukey
 
 from .edge_comparison import (
+    CENTRE_HALF,
     ColumnPhases,
     EdgeFractionResult,
-    fraction_at_edge,
-    side_band_centres,
+    band_centres,
+    compare,
 )
 from .models import parabolic_vertex
 from .unwrap import unwrap_goldstein, unwrap_itoh, unwrap_quality_guided
@@ -272,7 +273,7 @@ def _phases_at_row(band_phase, background, modulation, profiles, y, eval_row, de
 
 def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=None, bandwidth=0.5,
                           gap=30, span=180, step=5, half_width=2, deg_y=1, deg=1, r2_min=0.3,
-                          taper=0.0, min_cycles=4.0, order_sign=1) -> EdgeFractionResult:
+                          taper=0.0, min_cycles=4.0, order_sign=1, at_x=None, centre_half=None) -> EdgeFractionResult:
     """Fringe fraction at the edge column with Fourier-demodulated column phases.
 
     The same comparison as :func:`interflib.fringe.edge_comparison.edge_fraction` (platen
@@ -306,20 +307,23 @@ def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=No
     order_sign : {1, -1}
         ``+1`` when the interference order increases towards ``+y``, ``-1`` when it
         decreases (the fraction is then ``1 - F`` of the ``+1`` reading).
+    at_x, centre_half
+        As in :func:`interflib.fringe.edge_comparison.edge_fraction`: with ``at_x`` the
+        block is read around that column and only the platen line is extended to it.
 
     Returns
     -------
     EdgeFractionResult
     """
     fft_rows = rows if fft_rows is None else fft_rows
-    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
     if carrier is None:
         carrier = estimate_carrier(_bands(img, xs_platen, fft_rows, half_width), min_cycles)
     kwargs = dict(fft_rows=fft_rows, carrier=carrier, bandwidth=bandwidth, half_width=half_width,
                   deg=deg_y, taper=taper, min_cycles=min_cycles)
     platen = fourier_column_phases(img, xs_platen, rows, eval_row, **kwargs)
     block = fourier_column_phases(img, xs_block, rows, eval_row, **kwargs)
-    return fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    return compare(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign, at_x, centre_half)
 
 
 # --------------------------------------------------------------------------------------
@@ -641,7 +645,8 @@ def map_column_phases(phase_map: PhaseMap, img, x_centres, rows, eval_row, half_
 
 def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier=None, bandwidth=0.5,
                              gap=30, span=180, step=5, half_width=2, deg_y=1, deg=1, r2_min=0.3,
-                             taper=0.0, min_cycles=4.0, inner=12, outer=20, order_sign=1) -> EdgeFractionResult:
+                             taper=0.0, min_cycles=4.0, inner=12, outer=20, order_sign=1, at_x=None,
+                             centre_half=None) -> EdgeFractionResult:
     """Fringe fraction at the edge column with two-dimensional Fourier demodulation.
 
     A platen region left of the edge and a block region right of it are demodulated
@@ -677,6 +682,9 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     inner, outer : int
         Region margins: each region runs from ``inner`` px off the edge to ``span + outer``
         px away from it.
+    at_x, centre_half
+        As in :func:`fourier_edge_fraction`. The block region is then the block bands
+        around ``at_x`` with ``outer`` px on either side, kept ``inner`` px off the edge.
 
     Returns
     -------
@@ -692,15 +700,19 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
     if not 0 <= inner < gap - half_width:
         raise ValueError("inner must lie between 0 and gap - half_width")
     width = np.asarray(img).shape[1]
-    xs_platen, xs_block = side_band_centres(edge_x, gap, span, step)
+    xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
     xs_platen, xs_block = xs_platen.astype(int), xs_block.astype(int)
     cols_platen = (max(0, int(np.floor(edge_x - span - outer)) - half_width), int(np.floor(edge_x - inner)))
-    cols_block = (int(np.ceil(edge_x + inner)), min(width, int(np.ceil(edge_x + span + outer)) + half_width + 1))
+    if at_x is None:
+        cols_block = (int(np.ceil(edge_x + inner)), min(width, int(np.ceil(edge_x + span + outer)) + half_width + 1))
+    else:
+        cols_block = (max(int(np.ceil(edge_x + inner)), int(xs_block.min()) - outer - half_width),
+                      min(width, int(xs_block.max()) + outer + half_width + 1))
     # Each region gets its own carrier unless one is given: the synchronous detection of
     # demodulate_2d needs the carrier of the surface it demodulates, and the block-platen
     # wedge makes the two differ.
     maps = [demodulate_2d(img, fft_rows, c, carrier, bandwidth, taper, min_cycles) for c in (cols_platen, cols_block)]
     platen, block = [map_column_phases(m, img, xs, rows, eval_row, half_width, deg_y, bandwidth)
                      for m, xs in zip(maps, (xs_platen, xs_block), strict=True)]
-    result = fraction_at_edge(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign)
+    result = compare(platen, block, edge_x, eval_row, gap, span, deg, r2_min, order_sign, at_x, centre_half)
     return replace(result, fraction_error=float("nan"))

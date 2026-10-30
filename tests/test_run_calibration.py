@@ -41,7 +41,7 @@ def test_band_choice_is_reported_and_enters_u_of_f():
     assert frac["band_variants"]["30-180"] % 1.0 == pytest.approx(frac["fraction_used"], abs=1e-9)
     assert frac["u_band_choice"] == pytest.approx(frac["band_deviation"])
     parts = [u for u in (frac["u_extrapolation"], frac["u_mean_of_frames"], frac["u_band_choice"],
-                         frac["u_centre_position"]) if u == u]
+                         frac["u_centre_position"], frac["u_platen_extension"]) if u == u]
     assert frac["u_fraction"] == pytest.approx(sum(u * u for u in parts) ** 0.5)
     # the simulated sides are straight: the choice of bands hardly moves F
     assert frac["band_deviation"] < 0.002
@@ -158,3 +158,20 @@ def test_the_simulation_declares_its_block_size_as_the_face_dimensions():
     assert summary["inputs"]["face_mm"] == {"value": (9.0, 14.0), "origin": "simulation setting"}
     measured, expected = summary["image"]["face_centre"]["aspect"]
     assert measured == pytest.approx(expected, rel=0.02)
+
+
+def test_at_the_centre_only_the_platen_is_extended_and_its_bound_enters_u_of_f():
+    summary = _run("--scale", "0.5", *WHOLE_BLOCK, "--u-platen-extension", "0.02")
+    frac, image = summary["fraction"], summary["image"]
+    assert frac["evaluated_at"] == "face centre"
+    assert frac["u_platen_extension"] == 0.02
+    centre_x = image["face_centre"]["x"]
+    assert frac["platen_extension_px"] == pytest.approx(centre_x - (image["edge_x_px"] - 30))
+    parts = [u for u in (frac["u_extrapolation"], frac["u_mean_of_frames"], frac["u_band_choice"],
+                         frac["u_centre_position"], frac["u_platen_extension"]) if u == u]
+    assert frac["u_fraction"] == pytest.approx(sum(u * u for u in parts) ** 0.5)
+    assert any("platen line extended" in w for w in summary["warnings"])
+    assert abs(summary["truth"]["fraction_error"]) < 0.005
+    # at the edge there is no extension
+    edge = _run()["fraction"]
+    assert edge["evaluated_at"] == "edge column" and edge["u_platen_extension"] != edge["u_platen_extension"]

@@ -9,9 +9,12 @@ The chain, with the readers and solvers of the library:
    whole outline of the face, from part of it and the face dimensions (``--face-mm``), or
    from a centre given by hand (``--face-centre``). The face dimensions may also come from
    the sidecar (``cara_mm``, ``u_cara_mm``). Otherwise it is read at the edge column
-   and the evaluation row, with a warning. Its ``u(F)`` combines the scatter about the side
-   lines, the repeatability over the frames, how far ``F`` moves with the bands in the side
-   fits (``span_sensitivity``) and the uncertainty of the centre through the wedge;
+   and the evaluation row, with a warning. At the centre the block phase is measured there
+   (bands ``x_c +- 75`` px) and only the platen line is extended to it, since the block
+   hides the platen. Its ``u(F)`` combines the scatter about the side lines, the
+   repeatability over the frames, how far ``F`` moves with the platen bands
+   (``span_sensitivity``), the uncertainty of the centre through the wedge and, at the
+   centre, a type B bound of the platen extension (``--u-platen-extension``);
 2. the wavelength in air from the vacuum wavelength and the air temperature, pressure
    and humidity (modified Edlen);
 3. the integer order from the nominal length and, when a prior deviation with its
@@ -62,8 +65,8 @@ from interflib.dimensional.excess_fraction import GaugeBlockLength  # noqa: E402
 from interflib.dimensional.mefm import MonochromaticEFMSolver  # noqa: E402
 from interflib.dimensional.parity import check_fraction_parity  # noqa: E402
 from interflib.dimensional.refraction import EdlenRefractiveIndex  # noqa: E402
-from interflib.fringe.edge_comparison import (detect_edge_column, edge_fraction, edge_line_centre,  # noqa: E402
-                                              side_band_centres, side_fit, span_sensitivity)
+from interflib.fringe.edge_comparison import (CENTRE_HALF, detect_edge_column, edge_fraction,  # noqa: E402
+                                              edge_line_centre, side_band_centres, side_fit, span_sensitivity)
 from interflib.fringe.fourier import (demodulate_columns, estimate_carrier, fourier_edge_fraction,  # noqa: E402
                                       fourier_edge_fraction_2d)
 from interflib.fringe.geometry import locate_block, locate_face_centre  # noqa: E402
@@ -94,6 +97,11 @@ ASPECT_WARN = 0.02           # relative mismatch of the measured face aspect aga
 EDGE_ORIGINS = {"phase step and dark line": "phase-step line refined to the dark chamfer line",
                 "dark line": "dark chamfer line nearest the platen side (no phase-step line along it)",
                 "phase step": "phase-step line, not confirmed by a dark chamfer line"}
+# Type B bound of the platen line extended to the face centre, fringes. On the INM bench (2026-10
+# campaign, 2 mm block, the platen visible above it) the straight platen line, extended about
+# 250 px from its bands, missed the measured platen by 0.065 fringe; the deviation is taken whole,
+# as the band-choice deviation is, while the platen is not seen on both sides of the block.
+PLATEN_EXTENSION_U = 0.065
 PRIOR_K = 2.0                # coverage factor of --prior-U-nm (certificates and pre-measurements give U with k = 2)
 
 
@@ -341,12 +349,13 @@ def _search_from_platen(img):
 # --------------------------------------------------------------------------------------
 # Measurement
 # --------------------------------------------------------------------------------------
-def _read_fraction(method, img, edge_x, rows, eval_row, period, fft_rows, order_sign):
+def _read_fraction(method, img, edge_x, rows, eval_row, period, fft_rows, order_sign, at_x=None):
+    # At the edge, or with at_x at that column: the block read there, the platen line extended.
     if method == "sine":
-        return edge_fraction(img, edge_x, rows, eval_row, period, order_sign=order_sign)
+        return edge_fraction(img, edge_x, rows, eval_row, period, order_sign=order_sign, at_x=at_x)
     if method == "fourier":
-        return fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=fft_rows, order_sign=order_sign)
-    return fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=fft_rows, order_sign=order_sign)
+        return fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=fft_rows, order_sign=order_sign, at_x=at_x)
+    return fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=fft_rows, order_sign=order_sign, at_x=at_x)
 
 
 def _wrap(values, reference):
@@ -372,15 +381,28 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     platen_profile = img[fft_rows[0]:fft_rows[1], xe - 100:xe - 40].mean(axis=1)
     period = 1.0 / estimate_carrier(platen_profile[:, None])
 
+    # --- where F is read: at the face centre, with the block measured there and only the platen
+    # line extended, or at the edge column when there is no centre
+    centre = scene.get("face_centre")
+    x_c = centre["x"] if centre else None
+    try:
+        edge_reading = _read_fraction(args.method, img, edge_x, rows, eval_row, period, fft_rows, order_sign)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"the primary method {args.method!r} failed on this image ({exc})") from None
+    if x_c is not None:
+        try:
+            _read_fraction(args.method, img, edge_x, rows, eval_row, period, fft_rows, order_sign, x_c)
+        except (ValueError, RuntimeError) as exc:
+            notes.append(f"F at the face centre: the {args.method} reader failed ({exc}); F is read at the edge")
+            centre = x_c = None
+
     # --- F with every reader on the averaged image
     readings = {}
     for method in METHODS:
         try:
-            readings[method] = _read_fraction(method, img, edge_x, rows, eval_row, period, fft_rows, order_sign)
+            readings[method] = _read_fraction(method, img, edge_x, rows, eval_row, period, fft_rows, order_sign, x_c)
         except (ValueError, RuntimeError) as exc:
             notes.append(f"{method}: the reader failed ({exc})")
-    if args.method not in readings:
-        raise SystemExit(f"the primary method {args.method!r} failed on this image")
     primary = readings[args.method]
     reference = primary.fraction
     fractions = {m: float(_wrap(r.fraction, reference)) for m, r in readings.items()}
@@ -391,7 +413,8 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     if len(frames) > 1:
         for frame in frames:
             try:
-                reading = _read_fraction(args.method, frame, edge_x, rows, eval_row, period, fft_rows, order_sign)
+                reading = _read_fraction(args.method, frame, edge_x, rows, eval_row, period, fft_rows, order_sign,
+                                         x_c)
             except (ValueError, RuntimeError):
                 continue
             per_frame.append(reading.fraction)
@@ -400,21 +423,22 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     per_frame = _wrap(per_frame, reference) if per_frame else np.array([])
     s_frame = float(np.std(per_frame, ddof=1)) if per_frame.size > 1 else float("nan")
     u_mean = s_frame / math.sqrt(per_frame.size) if per_frame.size > 1 else float("nan")
-    # --- F at the face centre: both side lines extended to x_c (exact for straight lines), at
-    # the row of the centre (the evaluation row moved there)
-    centre = scene.get("face_centre")
-    x_c = centre["x"] if centre else None
-    g_x = order_sign * (primary.slope_block - primary.slope_platen)          # fringe/px
+    # --- F used, and how far it is from the reading at the edge (the wedge, and the face shape)
+    g_x = order_sign * (primary.slope_block - primary.slope_platen)          # fringe/px, at the point read
+    fraction_used = primary.fraction
     if x_c is not None:
-        shift = g_x * (x_c - edge_x)
-        fraction_used = float((primary.fraction + shift) % 1.0)
+        shift = float(_wrap(primary.fraction, edge_reading.fraction) - edge_reading.fraction)
         where = "face centre column" if centre["source"] == "manual column" else "face centre"
+        extension = float(x_c - (edge_x - 30))                       # from the nearest platen band
     else:
-        shift, fraction_used, where = None, primary.fraction, "edge column"
+        shift, where, extension = None, "edge column", 0.0
 
     # --- sensitivity to the bands in the side fits, where F is used: a model error of the lines
-    choice = span_sensitivity(primary.platen, primary.block, edge_x, eval_row, at_x=x_c, order_sign=order_sign)
+    # (with the block read at the centre, only the platen bands vary)
+    choice = span_sensitivity(primary.platen, primary.block, edge_x, eval_row, at_x=x_c, order_sign=order_sign,
+                              centre_half=CENTRE_HALF if x_c is not None else None)
     u_extrap, u_bands = primary.fraction_error, choice.model_error
+    u_extension = float(args.u_platen_extension) if x_c is not None else float("nan")
 
     # --- image quality: saturation, visibility per side, band fits, wedge
     max_adu = 2 ** args.bit_depth - 1
@@ -443,7 +467,7 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     if centre:
         g_y = wedge.wedge_y if wedge else float("nan")
         u_centre = float(math.hypot(g_x * centre["u_x"], g_y * centre["u_y"]))
-    parts = [u for u in (u_extrap, u_mean, u_bands, u_centre) if np.isfinite(u)]
+    parts = [u for u in (u_extrap, u_mean, u_bands, u_centre, u_extension) if np.isfinite(u)]
     u_fraction = float(math.sqrt(sum(u * u for u in parts))) if parts else float("nan")
 
     # --- geometry checks: band areas inside the fringe zone, fit window on the face
@@ -455,7 +479,8 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
     if face_rows:
         geometry["fit_window_on_face"] = bool(face_rows[0] <= rows[0] and rows[1] <= face_rows[1])
     if artifacts is not None:
-        artifacts.update(image=img, primary=primary, rows=rows, fft_rows=fft_rows, face_centre=centre,
+        artifacts.update(image=img, primary=primary, edge_reading=edge_reading, rows=rows, fft_rows=fft_rows,
+                         face_centre=centre,
                          edge_search=geometry.get("edge_search"), face_rows=face_rows, geometry=geometry)
     return {
         "image": {"source": scene["source"], "size_px": [height, width], "frames": len(frames),
@@ -478,8 +503,9 @@ def measure(args, scene: dict, inputs: Inputs, wavelength_air: float, notes: lis
                      "band_variants": {f"{gap}-{span}": float(f) for (gap, span), f in zip(choice.variants, choice.fraction,
                                                                                           strict=True)},
                      "band_deviation": choice.deviation, "u_band_choice": u_bands,
-                     "u_centre_position": u_centre, "u_fraction": u_fraction,
-                     "edge_fraction": primary.fraction, "face_centre_x_px": x_c,
+                     "u_centre_position": u_centre, "u_platen_extension": u_extension,
+                     "platen_extension_px": extension, "u_fraction": u_fraction,
+                     "edge_fraction": edge_reading.fraction, "face_centre_x_px": x_c,
                      "shift_edge_to_centre": shift, "fraction_used": fraction_used, "evaluated_at": where},
     }
 
@@ -663,8 +689,12 @@ def _warnings(summary, inputs: Inputs) -> list:
                    "defined (the block-platen wedge makes the two differ): the outline of the face is incomplete; "
                    "give the face dimensions (--face-mm) or the centre (--face-centre)")
     else:
-        out.append("F at the face centre extends the side lines beyond the measured bands; u(F) includes how the "
-                   "choice of bands moves it there, but not the scatter of that extension")
+        half = summary["air"]["half_wavelength_nm"]
+        out.append(f"F at the face centre compares the block read there with the platen line extended "
+                   f"{frac['platen_extension_px']:.0f} px beyond its bands, where the block hides the platen; u(F) "
+                   f"includes u_ext(F) = {frac['u_platen_extension']:.3f} fringe "
+                   f"({frac['u_platen_extension'] * half:.1f} nm), a bound from one check on the 2026-10 bench, not "
+                   "a measurement of this image; platen on both sides of the block would replace it")
     if centre:
         if centre["source"] == "outline and dimensions":
             width, length = centre["face_mm"]
@@ -762,14 +792,17 @@ def format_summary(s: dict) -> str:
         out.append(f"  repeatability ({frac['frames_read']} frames) s = {frac['repeatability_per_frame']:.4f}, "
                    f"s/sqrt(n) = {frac['u_mean_of_frames']:.4f} fringe")
     if frac["shift_edge_to_centre"] is not None:
-        out.append(f"  edge F = {frac['edge_fraction']:.4f} -> face centre (x = {frac['face_centre_x_px']:.1f} px) "
-                   f"F = {frac['fraction_used']:.4f}")
+        out.append(f"  edge F = {frac['edge_fraction']:.4f} -> face centre (x = {frac['face_centre_x_px']:.1f} px, "
+                   f"block read there) F = {frac['fraction_used']:.4f}")
     variants = ", ".join(f"{name} {f % 1.0:.4f}" for name, f in frac["band_variants"].items())
     out.append(f"  band choice   gap-span px: {variants}; u_m(F) = {frac['u_band_choice']:.4f} "
                f"({frac['u_band_choice'] * s['air']['half_wavelength_nm']:.1f} nm)")
     if centre:
-        out.append(f"  centre        u_c(F) = {_fmt(frac['u_centre_position'])} "
-                   f"({_fmt(frac['u_centre_position'] * s['air']['half_wavelength_nm'], '.1f')} nm) from its position")
+        half = s["air"]["half_wavelength_nm"]
+        out.append(f"  centre        u_pos(F) = {_fmt(frac['u_centre_position'])} "
+                   f"({_fmt(frac['u_centre_position'] * half, '.1f')} nm) from its position; platen line extended "
+                   f"{frac['platen_extension_px']:.0f} px, u_ext(F) = {_fmt(frac['u_platen_extension'], '.3f')} "
+                   f"({_fmt(frac['u_platen_extension'] * half, '.1f')} nm)")
     out.append(f"  F used = {frac['fraction_used']:.4f} at the {frac['evaluated_at']}, u(F) = {_fmt(frac['u_fraction'])}")
     order = s["order"]
     out.append(f"\nInteger order  kappa = {order['integer_order']}, nominal fraction F' = {order['nominal_fraction']:.4f}, "
@@ -851,7 +884,9 @@ def plot_regions(path, summary: dict, data: dict) -> None:
             ax_frame.axhline(y_face, color=BLOCK_COLOUR, ls=":", lw=1.0)
         ax_frame.plot([], [], color=BLOCK_COLOUR, ls=":", lw=1.0, label="face rows with fringes")
     ax_frame.axvline(x_e, color=EDGE_COLOUR, lw=1.2, label=f"edge x = {x_e:.1f}")
-    zx = (max(0, int(x_e) - 270), min(width, int(x_e) + 270))
+    centre = data.get("face_centre")
+    x_p = centre["x"] if centre is not None else x_e                 # column where F is read
+    zx = (max(0, int(x_e) - 270), min(width, max(int(x_e) + 270, int(x_p) + CENTRE_HALF + 60)))
     zy = (max(0, y_e - 300), min(height, y_e + 300))
     ax_frame.add_patch(Rectangle((zx[0], zy[0]), zx[1] - zx[0], zy[1] - zy[0], fill=False, ec="w", lw=1.2, ls="--"))
     geo = data.get("geometry", {})
@@ -867,11 +902,13 @@ def plot_regions(path, summary: dict, data: dict) -> None:
     crop = img[zy[0]:zy[1], zx[0]:zx[1]]
     ax_zoom.imshow(crop, cmap="gray", vmin=lo, vmax=hi, extent=(zx[0], zx[1], zy[1], zy[0]), aspect="auto")
     for x0, x1, colour, name in ((x_e - span - half, x_e - gap + half, PLATEN_COLOUR, "platen bands"),
-                                 (x_e + gap - half, x_e + span + half, BLOCK_COLOUR, "block bands")):
+                                 ((x_p - CENTRE_HALF - half, x_p + CENTRE_HALF + half) if centre is not None
+                                  else (x_e + gap - half, x_e + span + half)) + (BLOCK_COLOUR, "block bands")):
         ax_zoom.add_patch(Rectangle((x0, rows[0]), x1 - x0, rows[1] - rows[0], fill=False, ec=colour, lw=1.8,
                                     label=f"{name} ({x0:.0f}-{x1:.0f})"))
-    regions_2d = ((math.floor(x_e - span - 20) - half, math.floor(x_e - 12)),
-                  (math.ceil(x_e + 12), math.ceil(x_e + span + 20) + half + 1))
+    block_region = ((math.ceil(x_e + 12), math.ceil(x_e + span + 20) + half + 1) if centre is None else
+                    (int(x_p - CENTRE_HALF) - 20 - half, int(x_p + CENTRE_HALF) + 20 + half + 1))
+    regions_2d = ((math.floor(x_e - span - 20) - half, math.floor(x_e - 12)), block_region)
     for (x0, x1), colour in zip(regions_2d, (PLATEN_COLOUR, BLOCK_COLOUR), strict=True):
         ax_zoom.add_patch(Rectangle((x0, fft_rows[0]), x1 - x0, fft_rows[1] - fft_rows[0], fill=False, ec=colour,
                                     lw=1.0, ls="--"))
@@ -880,7 +917,6 @@ def plot_regions(path, summary: dict, data: dict) -> None:
                                 fc=FOURIER_COLOUR, alpha=0.25, ec="none", label="columns for the period"))
     ax_zoom.axvline(x_e, color=EDGE_COLOUR, lw=1.2, label="edge")
     ax_zoom.axhline(y_e, color="w", lw=0.8, ls=":", label=f"evaluation row {y_e}")
-    centre = data.get("face_centre")
     if centre is not None:
         ax_zoom.axvline(centre["x"], color="w", lw=1.0, ls="-.", label=f"face centre x = {centre['x']:.1f}")
         ax_frame.plot(centre["x"], centre["y"], "*", ms=12, mfc=BLOCK_COLOUR, mec="w",
@@ -894,9 +930,10 @@ def plot_regions(path, summary: dict, data: dict) -> None:
     # (c) band phases of the primary reader
     primary = data["primary"]
     platen_line = side_fit(primary.platen, (x_e - span, x_e - gap))
-    block_line = side_fit(primary.block, (x_e + gap, x_e + span))
+    block_range = (x_e + gap, x_e + span) if centre is None else (x_p - CENTRE_HALF, x_p + CENTRE_HALF)
+    block_line = side_fit(primary.block, block_range)
     ref = np.polyval(platen_line, x_e)
-    shift = 2 * np.pi * np.floor((np.polyval(block_line, x_e) - ref) / (2 * np.pi))
+    shift = 2 * np.pi * np.floor((np.polyval(block_line, x_p) - np.polyval(platen_line, x_p)) / (2 * np.pi))
     for cols, line, colour, name, offset in ((primary.platen, platen_line, PLATEN_COLOUR, "platen", 0.0),
                                              (primary.block, block_line, BLOCK_COLOUR, "block", shift)):
         good = np.isfinite(cols.phase_unwrapped) & (cols.r2 >= 0.3)
@@ -904,12 +941,16 @@ def plot_regions(path, summary: dict, data: dict) -> None:
                       color=colour, label=f"{name} bands")
         ax_phase.plot(cols.x[~good], (cols.phase_unwrapped[~good] - offset - ref) / (2 * np.pi), "x", ms=4,
                       color=colour, alpha=0.5)
-        xs = np.array([min(cols.x.min(), x_e), max(cols.x.max(), x_e)])
+        xs = np.array([min(cols.x.min(), x_e), max(cols.x.max(), x_p)]) if name == "platen" else \
+            np.array([min(cols.x.min(), x_p), max(cols.x.max(), x_p)])
         ax_phase.plot(xs, (np.polyval(line, xs) - offset - ref) / (2 * np.pi), "-", color=colour, lw=1)
     ax_phase.axvline(x_e, color=EDGE_COLOUR, lw=1.2)
+    if centre is not None:
+        ax_phase.axvline(x_p, color="0.3", lw=1.0, ls="-.")
     frac = summary["fraction"]
     ax_phase.set_title(f"(c) {frac['primary_method']} band phases at row {y_e}\n"
-                       f"F at the edge = {frac['edge_fraction']:.4f}")
+                       + (f"F at the face centre (dash-dot) = {frac['fraction_used']:.4f}" if centre is not None
+                          else f"F at the edge = {frac['edge_fraction']:.4f}"))
     ax_phase.set_xlabel("column x (px)")
     ax_phase.set_ylabel("phase relative to the platen at the edge (fringes)")
     ax_phase.legend(fontsize=7)
@@ -945,6 +986,9 @@ def parse_args(argv=None):
     ap.add_argument("--face-centre", type=float, nargs=2, metavar=("Y", "X"),
                     help="face centre given by hand, input image px (overrides the detection)")
     ap.add_argument("--u-face-centre-px", type=float, help="standard uncertainty of --face-centre on each axis, px")
+    ap.add_argument("--u-platen-extension", type=float, default=PLATEN_EXTENSION_U,
+                    help="type B bound of the platen line extended to the face centre, fringes "
+                         f"(default {PLATEN_EXTENSION_U}, from the 2026-10 bench)")
     ap.add_argument("--face-centre-x", type=float,
                     help="column of the face centre, px: F extended to it at the evaluation row (prefer --face-centre)")
     ap.add_argument("--pixel-mm", type=float, help="pixel size on the object, mm (wedge in microradians)")

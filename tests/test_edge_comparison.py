@@ -7,7 +7,9 @@ from interflib.fringe.edge_comparison import (
     detect_edge_column,
     edge_fraction,
     edge_line_centre,
+    centre_band_centres,
     fraction_at_edge,
+    fraction_at_point,
     side_band_centres,
     span_sensitivity,
 )
@@ -231,3 +233,66 @@ def test_span_sensitivity_at_another_column_extends_each_variant():
     edge = fraction_at_edge(*_straight_sides(0.3, curvature_block=2e-6), EDGE_X, EVAL_ROW)
     assert curved.fraction[0] == pytest.approx((edge.fraction + (edge.slope_block - edge.slope_platen) * 300) % 1.0)
     assert curved.deviation > span_sensitivity(*_straight_sides(0.3, curvature_block=2e-6), EDGE_X, EVAL_ROW).deviation
+
+
+# --------------------------------------------------------------------------------------
+# Block read at the face centre: only the platen is extended
+# --------------------------------------------------------------------------------------
+AT_X = EDGE_X + 250                # the face centre, half a 500 px face away from the edge
+
+
+def _sides_with_centre(fraction, curvature_block=0.0, g_p=2e-3, g_b=5e-3):
+    """Platen bands left of the edge and block bands around AT_X. The block phase is
+    ``fraction + g_b u`` above the platen line extended there, bent by ``curvature_block``
+    about AT_X, so the true fraction at AT_X is ``fraction`` whatever the curvature."""
+    xs_p = side_band_centres(EDGE_X, 30, 180, 5)[0]
+    xs_b = centre_band_centres(AT_X)
+    platen = 2 * np.pi * (0.1 + g_p * (xs_p - EDGE_X))
+    platen_at = 0.1 + g_p * (AT_X - EDGE_X)
+    v = xs_b - AT_X
+    block = 2 * np.pi * (platen_at + fraction + g_b * v + curvature_block * v ** 2)
+    return _side_phases(xs_p, platen), _side_phases(xs_b, block)
+
+
+def test_fraction_at_point_is_exact_for_straight_sides():
+    platen, block = _sides_with_centre(0.3)
+    res = fraction_at_point(platen, block, EDGE_X, AT_X, EVAL_ROW)
+    assert res.fraction == pytest.approx(0.3, abs=1e-9)
+    assert res.at_x == AT_X and res.edge_x == EDGE_X
+    assert res.slope_block == pytest.approx(5e-3) and res.slope_platen == pytest.approx(2e-3)
+
+
+def test_a_curved_face_only_biases_the_point_by_the_curvature_inside_the_bands():
+    """A line fitted to c*v^2 over bands symmetric about AT_X misses AT_X by c*var(v): the
+    block is interpolated, not extended, so a curved face does not move F further."""
+    c = 2e-6
+    res = fraction_at_point(*_sides_with_centre(0.3, curvature_block=c), EDGE_X, AT_X, EVAL_ROW)
+    v = centre_band_centres(AT_X) - AT_X
+    assert res.fraction - 0.3 == pytest.approx(c * v.var(), rel=1e-6)
+    # the same face read from the edge bands and extended to AT_X misses far more
+    xs_b = side_band_centres(EDGE_X, 30, 180, 5)[1]
+    w = xs_b - AT_X
+    block_edge = _side_phases(xs_b, 2 * np.pi * (0.1 + 2e-3 * 250 + 0.3 + 5e-3 * w + c * w ** 2))
+    platen = _sides_with_centre(0.3)[0]
+    edge = fraction_at_edge(platen, block_edge, EDGE_X, EVAL_ROW)
+    extended = (edge.fraction + (edge.slope_block - edge.slope_platen) * 250) % 1.0
+    assert abs(extended - 0.3) > 5 * abs(res.fraction - 0.3)
+
+
+def test_the_reader_reads_the_block_at_the_point():
+    """On an image the block bands lie around at_x and the result refers to it."""
+    img = _scene(0.3, wedge_x=1e-3)
+    edge = edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD)
+    at = edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD, at_x=EDGE_X + 150, centre_half=60)
+    assert at.at_x == EDGE_X + 150 and edge.at_x == EDGE_X
+    assert at.block.x.min() >= EDGE_X + 90 and at.block.x.max() <= EDGE_X + 210
+    # straight phases: the point reading is the edge reading extended by the wedge
+    assert (at.fraction - (edge.fraction + 1e-3 * 150) + 0.5) % 1.0 - 0.5 == pytest.approx(0.0, abs=2e-3)
+    with pytest.raises(ValueError, match="within 30 px of the edge"):
+        edge_fraction(img, EDGE_X, ROWS, EVAL_ROW, PERIOD, at_x=EDGE_X + 80)
+
+
+def test_span_sensitivity_at_the_point_only_varies_the_platen():
+    platen, block = _sides_with_centre(0.3)
+    sens = span_sensitivity(platen, block, EDGE_X, EVAL_ROW, at_x=AT_X, centre_half=75)
+    assert np.allclose(sens.fraction, 0.3, atol=1e-9)
