@@ -16,6 +16,9 @@ env/
 
 # === Artefactos de depuración (salidas sueltas de __main__) ===
 /fit.png
+/areas.png
+/out.json
+.coverage
 
 # === Sistema ===
 .DS_Store
