@@ -546,13 +546,18 @@ def run(args, artifacts=None) -> dict:
              "margin_to_quarter_wave_nm": wavelength_air / 4 - abs(solution.length_dev)}
     if args.prior_dev_nm is not None and args.prior_U_nm is not None:
         try:
+            # The prior is at 20 C and F at the block temperature: the solver expands the
+            # nominal to the block temperature and reduces each candidate to 20 C.
             mefm = MonochromaticEFMSolver(wavelength_air).solve(nominal_nm, args.prior_dev_nm, args.prior_U_nm,
-                                                                frac["fraction_used"])
+                                                                frac["fraction_used"], cte=inputs.value("cte_per_k"),
+                                                                temp_c=inputs.value("block_temperature_c"))
             order["mefm_length_dev_nm"] = mefm.length_dev
+            order["mefm_integer_order"] = mefm.integer_order
             order["mefm_acceptance_interval_nm"] = list(mefm.acceptance_interval)
-            if abs(mefm.length_dev - solution.length_dev) > 1e-6:
-                notes.append(f"MEFM picks another order than the nominal prior: d = {mefm.length_dev:+.1f} nm "
-                             f"against {solution.length_dev:+.1f} nm")
+            if mefm.integer_order != solution.integer_order:
+                notes.append(f"MEFM picks another order than the nominal prior: kappa = {mefm.integer_order} "
+                             f"(d = {mefm.length_dev:+.1f} nm) against {solution.integer_order} "
+                             f"(d = {solution.length_dev:+.1f} nm)")
         except (ValueError, RuntimeError) as exc:
             notes.append(f"MEFM: {exc}")
 

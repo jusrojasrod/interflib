@@ -264,8 +264,11 @@ decimals only.
 
 **One wavelength and a mechanical prior.** `MonochromaticEFMSolver` (MEFM) picks the only
 candidate that falls within `δ ± U` of the mechanically measured deviation. For the
-candidate to be unique, `U` must stay below `λ/4`. Here it recovers the simulated block
-from the fraction measured above.
+candidate to be unique, `U` must stay below `λ/4`. A certificate gives the deviation at
+20 °C while the fraction is measured at the block temperature: with `cte` and `temp_c` the
+solver expands the nominal to that temperature and reduces each candidate to 20 °C before
+testing it (without them it is only right at 20 °C; a 100 mm steel block moves 115 nm per
+0.1 K). Here it recovers the simulated block from the fraction measured above.
 
 ```python
 from interflib.dimensional.mefm import MonochromaticEFMSolver
@@ -274,7 +277,8 @@ mefm = MonochromaticEFMSolver(wavelength=543.5)   # the wavelength of the simula
 block = mefm.solve(nominal_length=2e6,             # L', nm
                    prior_length_dev=55.0,          # mechanical deviation from nominal, nm
                    prior_U=30.0,                   # its expanded uncertainty, nm
-                   fringe_fraction=res.fraction)
+                   fringe_fraction=res.fraction,
+                   cte=11.5e-6, temp_c=20.0)       # block expansion, 1/K, and temperature, C
 # deviation from nominal accepted by the optics, nm
 print(f"{block.length_dev:.1f}")                    # -> 51.0
 ```

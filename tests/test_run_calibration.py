@@ -61,6 +61,15 @@ def test_parity_is_reported_and_tested_against_a_prior():
     assert wrong["parity"]["flipped_length_dev_nm"] == pytest.approx(51.0, abs=2.0)
 
 
+def test_mefm_uses_the_block_temperature():
+    # A 2 mm block at 21 C is 23 nm longer than at 20 C; the prior (51 +- 20 nm) is at 20 C.
+    summary = _run("--temperature", "20", "--block-temp", "21", "--prior-dev-nm", "51", "--prior-U-nm", "20")
+    order = summary["order"]
+    assert order["mefm_integer_order"] == order["integer_order"]
+    assert order["mefm_length_dev_nm"] == pytest.approx(summary["length"]["deviation_from_nominal_nm"], abs=1e-3)
+    assert not any(w.startswith("MEFM") for w in summary["warnings"])
+
+
 def test_json_summary_is_written(tmp_path, capsys):
     out = tmp_path / "summary.json"
     run_calibration.main([*SMALL, "--json", str(out)])
