@@ -29,6 +29,12 @@ print(img.shape)                     # -> (1024, 1224)
 print(round(sim.fraction_truth, 4))  # -> 0.8933
 ```
 
+```{figure} ../images/simulation_layers.png
+:alt: The three layers of a synthetic interferogram
+
+The three layers of the scene above. (a) The optical path difference: the reference tilt gives the fringes, the block adds a step of `2L` at its edges. (b) Its wrapped phase. (c) The irradiance after image formation: Gaussian beam, visibility and blur. (d) What the sensor records, in 12-bit counts, over a small patch: shot and read noise on top of the irradiance.
+```
+
 ## The configuration objects
 
 | Object | Layer | Holds |

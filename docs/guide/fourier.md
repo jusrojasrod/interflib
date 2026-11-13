@@ -64,5 +64,11 @@ relief = unwrap_phase_map(face).object_phase / (2 * np.pi)       # fringes
   (the curvature);
 - `bandwidth_sensitivity`: how much `F` moves with the filter width.
 
+```{figure} ../images/field_overview.png
+:alt: Whole-field carrier-free phase and fringe modulation
+
+`field_overview` on the frame of the guide, with the carrier estimated on the platen. (a) Once the carrier is removed, the platen is flat and the block stands out by its fraction. (b) The fringe modulation follows the beam and drops along the block edges (dashed: the edge the readers use).
+```
+
 The [Fourier notebook](../notebooks/_generated/20261022-metodo-de-fourier.ipynb) develops
 the method step by step, including the choice of the filter.

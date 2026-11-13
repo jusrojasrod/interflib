@@ -14,6 +14,12 @@ lambda_air = air.wavelength_in_air(543.5163)     # vacuum wavelength in, nm
 print(f"{air.index_refraction(543.5163) - 1:.4e} {lambda_air:.4f}")   # -> 2.0260e-04 543.4062
 ```
 
+```{figure} ../images/air_index.png
+:alt: Refractive index of air against pressure and humidity
+
+`n − 1` at 543.5163 nm. Pressure dominates: (a) it is nearly proportional to it, and a few kelvin move it less. (b) Humidity lowers it slightly. The dot is the example above.
+```
+
 The inputs are the air temperature in °C, the pressure in Pa and one humidity state: the
 relative humidity in %, the dew point or the frost point. An input outside the range the calculation accepts raises `EdlenInputBoundsError`
 instead of being extrapolated. A pressure outside 60–120 kPa or a humidity above 85 % only

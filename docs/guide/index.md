@@ -3,7 +3,15 @@
 The block surface stands `L` above the platen. In double pass, the fringes on the block
 are shifted against those on the platen by the **fringe fraction**
 $F = \operatorname{frac}(2L/\lambda)$, the part of the interference order that an image
-can show. The guide follows the chain from the image to the length:
+can show.
+
+```{figure} ../images/pipeline.png
+:alt: From the interferogram to the fraction to the length
+
+The chain on the simulated 2 mm block, 51 nm long: the column bands on each side of the edge (1), their phases extrapolated to the edge column, whose difference is the fraction `F` (2), and the candidate lengths spaced `λ/2` apart, of which the mechanical prior (shaded) keeps one (3).
+```
+
+The guide follows the chain from the image to the length:
 
 | Step | Page | Module |
 |---|---|---|

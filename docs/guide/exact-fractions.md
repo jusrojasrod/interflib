@@ -79,6 +79,12 @@ block = mefm.solve(nominal_length=2e6,             # L', nm
 print(f"{block.length_dev:.1f}")                    # -> 51.0
 ```
 
+```{figure} ../images/mefm.png
+:alt: Candidate lengths of one wavelength and the two priors
+
+With one wavelength the fraction allows a comb of deviations spaced `λ/2` apart (grey lines). The nominal prior of `GaugeBlockLength` keeps the candidate within `λ/4` of the nominal (blue); the mechanical prior of MEFM keeps the one within `δ ± U` (yellow). Both keep `d = 51.0 nm` here; the mechanical prior also works when the block is further than `λ/4` from its nominal.
+```
+
 ## One wavelength, nominal length as prior
 
 `GaugeBlockLength` is the classical single-wavelength computation (Doiron & Beers 1995,

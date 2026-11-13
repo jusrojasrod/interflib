@@ -21,6 +21,12 @@ check = check_fraction_parity(271.7, 51.3, 0.1416, prior_length_dev=51.0, prior_
 print(f"{check.z:+.2f} {check.flipped_z:+.2f} {check.verdict}")   # -> +0.02 -5.42 confirmed
 ```
 
+```{figure} ../images/parity.png
+:alt: Cost of a wrong parity and the test against a prior
+
+(a) How far the other parity moves the deviation, at least: nothing at `F = 0` or `0.5`, up to `λ/4` at `F = 0.25` or `0.75`. The dot is the 2 mm block of the example. (b) The two readings of that block against the certificate: the declared one agrees with it, the other lies 5.4 standard uncertainties away, so the parity is confirmed.
+```
+
 [`run_calibration.py`](../tools/run-calibration.md) always reports the length the other
 parity would give, and tests both against the prior when one is given. The
 [parity notebook](../notebooks/_generated/20261027-paridad-de-la-lectura.ipynb) shows the

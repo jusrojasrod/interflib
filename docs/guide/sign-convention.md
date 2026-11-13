@@ -38,6 +38,12 @@ right = edge_fraction(reversed_tilt, edge_x, rows, eval_row, height / 30, order_
 print(f"{wrong.fraction:.4f} {right.fraction:.4f}")   # -> 0.1067 0.8933
 ```
 
+```{figure} ../images/sign_convention.png
+:alt: The same block with the reference tilt reversed
+
+Left: the scene of the guide, read with the default `order_sign = +1`. Right: the same block with the reference tilt reversed. The fringes on the block now step the other way at the edge (dashed), so `+1` reads `1 − F`; declaring `order_sign = −1` gives `F` back. The image alone cannot tell the two cases apart: the direction comes from the bench.
+```
+
 The side of the platen has the same effect: a platen declared on the wrong side also reads
 `1 − F`, and two wrong declarations cancel. Neither shows in the image.
 [Parity of the reading](parity.md) gives what a wrong declaration would cost and tests it

@@ -64,6 +64,12 @@ Truth          F = 0.1636, L = 2.0000510 mm;   error F -0.0000, L -0.00 nm
 frame, a zoom around the edge with the platen and block bands and the Fourier regions, and
 the band phases with the two lines extended to the edge.
 
+```{figure} ../images/run_calibration_areas.png
+:alt: The areas run_calibration used on a simulated block
+
+`--plot` on a simulated block whose whole face is in the field (`--block-size-mm 9 14`). (a) The frame, with the Fourier rows, the edge and the face centre found from the outline (star). (b) The zoom around the edge: platen and block bands, the two 2-D Fourier regions and the face centre (dash-dot). (c) The band phases at the evaluation row: the block line is read at the face centre and only the platen line is extended to it.
+```
+
 ```{warning}
 The contribution `u(F)·λ/2` covers only the reading of the fraction. It is **not** the
 calibration uncertainty, which also includes the air, the temperatures, the wavelength, the

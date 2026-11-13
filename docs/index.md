@@ -23,6 +23,12 @@ The library covers the whole measurement chain:
    wavelengths or with one wavelength and a mechanical prior.
 4. **Reduce the length to 20 °C**, and check the parity of the reading (`F` against `1 − F`).
 
+```{figure} images/pipeline.png
+:alt: From the interferogram to the fraction to the length
+
+The chain on the simulated 2 mm block, 51 nm long: the column bands on each side of the edge (1), their phases extrapolated to the edge column, whose difference is the fraction `F` (2), and the candidate lengths spaced `λ/2` apart, of which the mechanical prior (shaded) keeps one (3).
+```
+
 A layered interferogram simulator supplies images with a known truth for every step, and
 `tools/run_calibration.py` runs the whole chain on a simulated block or a real series.
 

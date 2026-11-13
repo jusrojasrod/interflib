@@ -21,6 +21,10 @@ The library covers the whole chain:
 A layered interferogram simulator supplies images with a known truth for every step, and
 `tools/run_calibration.py` runs the whole chain on a simulated block or a real series.
 
+![From the image to the length](docs/images/pipeline.png)
+
+*The chain on a simulated 2 mm block, 51 nm long: column bands on each side of the edge, their phases extrapolated to the edge (the difference is the fraction `F`), and the candidate lengths spaced `λ/2` apart, of which a mechanical prior keeps one.*
+
 ![Synthetic interferogram](docs/images/interferogram.png)
 
 *A synthetic frame from the simulator: a 9 mm wide gauge block wrung to a platen, about
