@@ -516,5 +516,6 @@ with its tests.
 
 ## License
 
-Proprietary. Developed for the interferometry project of the Instituto Nacional de
-Metrología (INM). Not for redistribution.
+BSD 3-Clause License. Copyright (c) 2026, Instituto Nacional de Metrología de Colombia
+(INM); see [LICENSE](LICENSE). The authors are listed in [AUTHORS.md](AUTHORS.md). To cite
+the library, use [CITATION.cff](CITATION.cff) (GitHub shows it as *Cite this repository*).

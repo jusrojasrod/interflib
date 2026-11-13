@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use interflib, please cite it as below."
+title: "interflib: analysis library for gauge-block interferometry"
+abstract: >-
+  Absolute length of gauge blocks from Twyman-Green interferograms: fringe-fraction
+  readers (sinusoidal fit, Fourier demodulation, phase stepping), the refractive index
+  of air, the method of exact fractions and a layered interferogram simulator.
+type: software
+authors:
+  - given-names: Juan Sebastián
+    family-names: Rojas Rodríguez
+    affiliation: Instituto Nacional de Metrología de Colombia (INM)
+license: BSD-3-Clause
+repository-code: "https://github.com/jusrojasrod/interflib"
+url: "https://jusrojasrod.github.io/interflib/"
+version: 0.1.0
+keywords:
+  - interferometry
+  - gauge blocks
+  - metrology
+  - fringe analysis
+  - method of exact fractions

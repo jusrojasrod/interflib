@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +8,16 @@ version = "0.1.0"
 description = "Analysis library for the INM interferometry project"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
-authors = [{ name = "Sebastian" }]
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Juan Sebastián Rojas Rodríguez" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
@@ -21,6 +29,19 @@ dependencies = [
 dev = ["pytest>=7.4", "nbstripout>=0.6", "ruff>=0.5"]
 notebooks = ["scikit-image>=0.21"]
 tools = ["pyyaml>=6.0"]
+docs = [
+    "sphinx>=7.3",
+    "pydata-sphinx-theme>=0.15",
+    "myst-nb>=1.1",
+    "sphinx-argparse>=0.5",
+    "sphinx-copybutton>=0.5",
+    "ipykernel>=6.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Documentation = "https://jusrojasrod.github.io/interflib/"
+Source = "https://github.com/jusrojasrod/interflib"
 
 [tool.setuptools.packages.find]
 where = ["src"]
