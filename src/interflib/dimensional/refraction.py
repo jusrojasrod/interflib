@@ -33,10 +33,8 @@ class EdlenRefractiveIndex:
     dew_point : float, optional
         Dew-point temperature, degrees Celsius.
     frost_point : float, optional
-        Frost-point temperature, degrees Celsius.
-
-    Exactly one of ``relative_humidity``, ``dew_point`` and ``frost_point`` must be
-    given.
+        Frost-point temperature, degrees Celsius. Exactly one of
+        ``relative_humidity``, ``dew_point`` and ``frost_point`` must be given.
 
     Raises
     ------

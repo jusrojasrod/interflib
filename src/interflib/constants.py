@@ -10,11 +10,12 @@ A constant without a citation is a defect. If a value is provisional, mark it
 
 References
 ----------
-.. [NIST] J. A. Stone and J. H. Zimmerman, "Index of Refraction of Air", NIST
-   Engineering Metrology Toolbox, https://emtoolbox.nist.gov/Wavelength/Documentation.asp
-   (Appendix A).
-.. [BD]   K. P. Birch and M. J. Downs, "An updated Edlen equation for the refractive index
-   of air", Metrologia 30, 155-162 (1993); correction, Metrologia 31, 315-316 (1994).
+[NIST] J. A. Stone and J. H. Zimmerman, "Index of Refraction of Air", NIST
+Engineering Metrology Toolbox, https://emtoolbox.nist.gov/Wavelength/Documentation.asp
+(Appendix A).
+
+[BD] K. P. Birch and M. J. Downs, "An updated Edlen equation for the refractive index
+of air", Metrologia 30, 155-162 (1993); correction, Metrologia 31, 315-316 (1994).
 """
 
 # Standard reference temperature for dimensional metrology; gauge-block lengths are

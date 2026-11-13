@@ -25,7 +25,7 @@ nanometres; the field of view and block footprint are in millimetres.
 The block step is injected as its **observable reduced value** ``frac(2 L / lambda)``
 rather than the full (huge) central length, which is both numerically clean and exactly
 what a fringe-fraction reader recovers. The recovered ground truth is returned in
-:attr:`SyntheticInterferogram.fraction_truth`; feeding a synthesized image back through
+``SyntheticInterferogram.fraction_truth``; feeding a synthesized image back through
 ``interflib.fringe.profile_fit`` returns the same fraction up to noise.
 
 The phase-change difference defaults to zero, matching the current excess-fraction

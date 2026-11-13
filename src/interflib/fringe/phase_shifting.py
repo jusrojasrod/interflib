@@ -302,7 +302,7 @@ def column_phases_from_map(phase, x_centres, rows, eval_row, modulation=None, ha
 
     Returns
     -------
-    ColumnPhases
+    ~interflib.fringe.edge_comparison.ColumnPhases
         ``r2`` holds the mean resultant length of the fit residuals,
         ``|mean exp(i (Phi - fit))|`` in ``[0, 1]`` (1 for a clean band, near 0 for noise),
         because a phase map has no intensity profile to compare against; it plays the same
@@ -382,7 +382,7 @@ def edge_fraction_from_phase(phase, edge_x, rows, eval_row, modulation=None, gap
 
     Returns
     -------
-    EdgeFractionResult
+    ~interflib.fringe.edge_comparison.EdgeFractionResult
     """
     xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
     platen, block = [column_phases_from_map(phase, xs, rows, eval_row, modulation, half_width, deg_y)

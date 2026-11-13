@@ -48,7 +48,6 @@ import numpy as np
 from scipy.signal.windows import tukey
 
 from .edge_comparison import (
-    CENTRE_HALF,
     ColumnPhases,
     EdgeFractionResult,
     band_centres,
@@ -225,7 +224,7 @@ def fourier_column_phases(img, x_centres, rows, eval_row, fft_rows=None, carrier
 
     Returns
     -------
-    ColumnPhases
+    ~interflib.fringe.edge_comparison.ColumnPhases
         ``r2`` is the coefficient of determination of the demodulated fringe model
         ``a + b sin(phase)`` against the band intensity over ``rows``; ``phase_error`` is
         the standard error of the polynomial at ``eval_row``, inflated for the
@@ -313,7 +312,7 @@ def fourier_edge_fraction(img, edge_x, rows, eval_row, fft_rows=None, carrier=No
 
     Returns
     -------
-    EdgeFractionResult
+    ~interflib.fringe.edge_comparison.EdgeFractionResult
     """
     fft_rows = rows if fft_rows is None else fft_rows
     xs_platen, xs_block = band_centres(edge_x, gap, span, step, at_x, centre_half)
@@ -626,7 +625,7 @@ def map_column_phases(phase_map: PhaseMap, img, x_centres, rows, eval_row, half_
 
     Returns
     -------
-    ColumnPhases
+    ~interflib.fringe.edge_comparison.ColumnPhases
     """
     x_centres = np.asarray(x_centres, dtype=int)
     x0, y0 = int(phase_map.x[0]), int(phase_map.y[0])
@@ -688,7 +687,7 @@ def fourier_edge_fraction_2d(img, edge_x, rows, eval_row, fft_rows=None, carrier
 
     Returns
     -------
-    EdgeFractionResult
+    ~interflib.fringe.edge_comparison.EdgeFractionResult
         With ``fraction_error`` set to NaN: the two-dimensional filter correlates
         neighbouring bands along ``x``, the side fits absorb that correlated error and the
         residual scatter underestimates it (by about a factor of ten in synthetic tests).

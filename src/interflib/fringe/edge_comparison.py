@@ -565,7 +565,7 @@ def span_sensitivity(platen: ColumnPhases, block: ColumnPhases, edge_x, eval_row
         variant must lie inside the bands they cover; the variants only select among them.
     edge_x, eval_row
         As in :func:`fraction_at_edge`.
-    variants : sequence of (int, int)
+    variants : sequence of tuple of int
         ``(gap, span)`` of each variant, px; the first is the reading being assessed.
     at_x : float, optional
         Column where the fraction is used: the edge if omitted. At another column (the

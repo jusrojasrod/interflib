@@ -63,7 +63,7 @@ class WedgeMeasurement:
         Magnitude ``hypot(angle_x_urad, angle_y_urad)``, microradians.
     within_tolerance : bool or None
         ``angle_urad <= max_angle_urad`` if both are available, else ``None``.
-    edge : EdgeFractionResult
+    edge : ~interflib.fringe.edge_comparison.EdgeFractionResult
         The underlying edge comparison (fraction, slopes and band phases).
     """
 

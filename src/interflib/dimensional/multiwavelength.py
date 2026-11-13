@@ -54,7 +54,7 @@ class OrderCandidate:
 
     @property
     def correction(self):
-        """Deprecated alias of :attr:`length_dev`, nm."""
+        """Deprecated alias of ``length_dev``, nm."""
         warn_deprecated("OrderCandidate.correction is deprecated; use length_dev")
         return self.length_dev
 
@@ -72,7 +72,7 @@ class ExcessFractionSolution:
 
     @property
     def correction(self):
-        """Deprecated alias of :attr:`length_dev`, nm."""
+        """Deprecated alias of ``length_dev``, nm."""
         warn_deprecated("ExcessFractionSolution.correction is deprecated; use length_dev")
         return self.length_dev
 

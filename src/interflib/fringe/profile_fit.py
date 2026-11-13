@@ -121,7 +121,10 @@ class FringeFractionMeasurement:
         max_iterations : int
             Maximum number of function evaluations of each non-linear fit.
 
-        Returns ``self`` so calls can be chained.
+        Returns
+        -------
+        FringeFractionMeasurement
+            ``self``, so calls can be chained.
         """
         if self.platen_profile is None:
             self.get_fringe_profiles()

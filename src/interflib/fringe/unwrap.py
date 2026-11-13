@@ -268,7 +268,7 @@ def _fill_barrier_pixels(phase, unwrapped, valid):
 def unwrap_goldstein(phase, mask=None, return_cuts=False):
     """Goldstein branch-cut unwrap.
 
-    Locates residues, balances them with branch cuts (:func:`_place_branch_cuts`), and
+    Locates residues, balances them with branch cuts (``_place_branch_cuts``), and
     unwraps by a flood fill that treats cuts (and invalid pixels) as barriers, confining any
     path-dependence to the cuts (Goldstein, Zebker & Werner, *Radio Sci.* 23, 713, 1988).
 
@@ -283,7 +283,7 @@ def unwrap_goldstein(phase, mask=None, return_cuts=False):
 
     Returns
     -------
-    numpy.ndarray or (numpy.ndarray, numpy.ndarray)
+    numpy.ndarray or tuple of numpy.ndarray
         Unwrapped phase (``nan`` outside ``mask``), and the branch-cut map if requested.
     """
     phase = np.asarray(phase, dtype=float)

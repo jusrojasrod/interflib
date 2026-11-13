@@ -60,7 +60,7 @@ def field_overview(img, rows, cols, carrier=None, carrier_cols=None, bandwidth=0
 
     Returns
     -------
-    PhaseMap
+    ~interflib.fringe.fourier.PhaseMap
         Not suited for measuring near the edge (see the module docstring).
     """
     if carrier is None:
@@ -228,7 +228,7 @@ def surface_phase(phase_map: PhaseMap, mask, method="quality") -> SurfacePhase:
 
     Parameters
     ----------
-    phase_map : PhaseMap
+    phase_map : ~interflib.fringe.fourier.PhaseMap
         Usually the output of :func:`field_overview`.
     mask : array_like of bool
         Pixels of the surface (for instance the modulation mask restricted to one side of

@@ -4,7 +4,7 @@ Scope: physically layered generation of Twyman-Green gauge-block interferograms
 (optical phase -> image formation -> sensor), used as ground truth for the L1 excess-
 fraction and L2 fringe-analysis pipelines.
 
-The single-frame primitive :func:`synthesize_interferogram` carries the hooks
+The single-frame primitive :func:`~interflib.simulation.interferogram.synthesize_interferogram` carries the hooks
 (``phase_shift_rad``, per-wavelength phase model) needed to later assemble phase-shifted
 stacks and multi-wavelength sets without changing its physics.
 """
