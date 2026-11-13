@@ -181,36 +181,43 @@ class GaugeBlockLength:
     # Deprecated attribute names (and units) of the former signature
     @property
     def lambda_air(self):
+        """Deprecated alias of :attr:`wavelength`, nm."""
         warn_deprecated("GaugeBlockLength.lambda_air is deprecated; use wavelength")
         return self.wavelength
 
     @property
     def Lp(self):  # noqa: N802
+        """Deprecated alias of :attr:`nominal_length`, in mm instead of nm."""
         warn_deprecated("GaugeBlockLength.Lp (mm) is deprecated; use nominal_length (nm)")
         return self.nominal_length / 1e6
 
     @property
     def C(self):  # noqa: N802
+        """Deprecated alias of :attr:`cte`, 1/K."""
         warn_deprecated("GaugeBlockLength.C is deprecated; use cte")
         return self.cte
 
     @property
     def t_block(self):
+        """Deprecated alias of :attr:`temp_c`, °C."""
         warn_deprecated("GaugeBlockLength.t_block is deprecated; use temp_c")
         return self.temp_c
 
     @property
     def obs_fraction(self):
+        """Deprecated alias of :attr:`fringe_fraction`."""
         warn_deprecated("GaugeBlockLength.obs_fraction is deprecated; use fringe_fraction")
         return self.fringe_fraction
 
     @property
     def refractive_index(self):
+        """Deprecated alias of :attr:`n_air`."""
         warn_deprecated("GaugeBlockLength.refractive_index is deprecated; use n_air")
         return self.n_air
 
     @property
     def wavelength_vacuum(self):
+        """Deprecated alias of :attr:`wavelength_vac`, nm."""
         warn_deprecated("GaugeBlockLength.wavelength_vacuum is deprecated; use wavelength_vac")
         return self.wavelength_vac
 

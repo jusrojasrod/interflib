@@ -108,6 +108,7 @@ def _flood_fill_unwrap(phase, allowed, quality=None) -> np.ndarray:
     remaining = set(map(tuple, np.argwhere(allowed)))
 
     def push_neighbours(heap, i, j):
+        """Queue the unvisited, allowed neighbours of ``(i, j)`` by decreasing quality."""
         for di, dj in _NEIGHBOURS:
             ni, nj = i + di, j + dj
             if 0 <= ni < height and 0 <= nj < width and allowed[ni, nj] \

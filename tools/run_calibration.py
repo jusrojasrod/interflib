@@ -966,8 +966,10 @@ def plot_regions(path, summary: dict, data: dict) -> None:
     plt.close(fig)
 
 
-def parse_args(argv=None):
-    ap = argparse.ArgumentParser(description="End-to-end gauge-block measurement with a summary report.")
+def build_parser() -> argparse.ArgumentParser:
+    """The command-line parser of the script (also read by the documentation)."""
+    ap = argparse.ArgumentParser(prog="run_calibration.py",
+                                 description="End-to-end gauge-block measurement with a summary report.")
     ap.add_argument("--series", help="folder of one burst of frames, with its <folder>.meta.yaml sidecar")
     ap.add_argument("--nominal-mm", type=float, help="nominal length, mm (sidecar: patron)")
     ap.add_argument("--wavelength-vac", type=float, help="vacuum wavelength, nm (sidecar: longitud_onda_nm)")
@@ -1015,7 +1017,11 @@ def parse_args(argv=None):
                      help="offset of the block from the frame centre, mm")
     sim.add_argument("--block-size-mm", type=float, nargs=2, default=(9.0, 35.0), metavar=("WIDTH", "LENGTH"),
                      help="measuring face of the simulated block, mm (default 9 x 35: its ends are out of the field)")
-    return ap.parse_args(argv)
+    return ap
+
+
+def parse_args(argv=None):
+    return build_parser().parse_args(argv)
 
 
 def main(argv=None) -> dict:
