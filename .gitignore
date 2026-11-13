@@ -24,3 +24,9 @@ env/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# === Documentation (Sphinx) ===
+docs/_build/
+docs/api/generated/
+docs/notebooks/_generated/
+jupyter_execute/
